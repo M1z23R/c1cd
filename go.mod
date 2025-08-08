@@ -1,4 +1,4 @@
-module drcicd
+module c1cd 
 
 go 1.24.4
 

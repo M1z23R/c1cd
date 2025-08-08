@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 )
 
-const configPath = ".config/drcicd/config.json"
+const configPath = ".config/c1cd/config.json"
 
 var (
 	PORT string
@@ -53,7 +54,7 @@ func main() {
 			fmt.Println("No pipeline jobs configured. Please run wizard first.")
 			os.Exit(1)
 		}
-		runService(cfg)
+		runService()
 		return
 	}
 
@@ -230,7 +231,7 @@ func wizard(token string) (PipelineJob, error) {
 	// 2. Workspace path
 	workspace := ""
 	wsPrompt := &survey.Input{Message: "Enter your workspace path (where commands will run):"}
-	err = survey.AskOne(wsPrompt, &workspace, survey.WithValidator(func(val interface{}) error {
+	err = survey.AskOne(wsPrompt, &workspace, survey.WithValidator(func(val any) error {
 		s, ok := val.(string)
 		if !ok || s == "" {
 			return errors.New("workspace path cannot be empty")
@@ -285,7 +286,7 @@ func wizard(token string) (PipelineJob, error) {
 	event := ""
 	eventPrompt := &survey.Select{
 		Message: "Select event to listen for:",
-		Options: []string{"on_push", "on_merge_request", "on_tag"},
+		Options: getAllowedEventKeys(),
 		Default: "on_push",
 	}
 	err = survey.AskOne(eventPrompt, &event)
@@ -304,7 +305,7 @@ func wizard(token string) (PipelineJob, error) {
 		return job, err
 	}
 	branches := []string{}
-	for _, b := range strings.Split(branchesRaw, ",") {
+	for b := range strings.SplitSeq(branchesRaw, ",") {
 		if trimmed := strings.TrimSpace(b); trimmed != "" {
 			branches = append(branches, trimmed)
 		}
@@ -328,7 +329,7 @@ func wizard(token string) (PipelineJob, error) {
 			Message: "Enter commands file path:",
 			Help:    "One command per line",
 		}
-		err = survey.AskOne(filePrompt, &filename, survey.WithValidator(func(val interface{}) error {
+		err = survey.AskOne(filePrompt, &filename, survey.WithValidator(func(val any) error {
 			s, ok := val.(string)
 			if !ok || s == "" {
 				return errors.New("filename cannot be empty")
@@ -462,26 +463,47 @@ func searchProjects(token, search string) ([]Project, error) {
 	return projects, nil
 }
 
+var allowedEvents = map[string]string{
+	"on_push":               "push_events",
+	"on_merge_request":      "merge_requests_events",
+	"on_tag":                "tag_push_events",
+	"on_issue":              "issues_events",
+	"on_note":               "note_events",
+	"on_job":                "job_events",
+	"on_pipeline":           "pipeline_events",
+	"on_wiki_page":          "wiki_page_events",
+	"on_release":            "release_events",
+	"on_confidential_issue": "confidential_issues_events",
+	"on_confidential_note":  "confidential_note_events",
+}
+
 func createWebhook(token string, job PipelineJob) error {
 	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%d/hooks", job.ProjectID)
+
+	allowedEvents := map[string]string{
+		"on_push":               "push_events",
+		"on_merge_request":      "merge_requests_events",
+		"on_tag":                "tag_push_events",
+		"on_issue":              "issues_events",
+		"on_note":               "note_events",
+		"on_job":                "job_events",
+		"on_pipeline":           "pipeline_events",
+		"on_wiki_page":          "wiki_page_events",
+		"on_release":            "release_events",
+		"on_confidential_issue": "confidential_issues_events",
+		"on_confidential_note":  "confidential_note_events",
+	}
+
+	eventKey, ok := allowedEvents[job.Event]
+	if !ok {
+		return fmt.Errorf("unsupported event type: %s", job.Event)
+	}
 
 	payload := map[string]any{
 		"url":                     job.WebhookURL,
 		"enable_ssl_verification": job.EnableSSLVerification,
 		"token":                   job.Secret,
-	}
-
-	// Map job.Event to webhook event flags
-	switch job.Event {
-	case "on_push":
-		payload["push_events"] = true
-	case "on_merge_request":
-		payload["merge_requests_events"] = true
-	case "on_tag":
-		payload["tag_push_events"] = true
-	default:
-		// fallback or return error
-		return fmt.Errorf("unsupported event type: %s", job.Event)
+		eventKey:                  true, // dynamically set event flag
 	}
 
 	jsonBody, err := json.Marshal(payload)
@@ -489,7 +511,7 @@ func createWebhook(token string, job PipelineJob) error {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", apiURL, strings.NewReader(string(jsonBody)))
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return err
 	}
@@ -503,15 +525,15 @@ func createWebhook(token string, job PipelineJob) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 201 {
+	body, _ := io.ReadAll(resp.Body)
+
+	switch resp.StatusCode {
+	case 201:
 		fmt.Println("Webhook created successfully!")
 		return nil
-	} else if resp.StatusCode == 409 {
-		// Webhook already exists - optionally update or notify user
-		body, _ := io.ReadAll(resp.Body)
+	case 409:
 		return fmt.Errorf("webhook already exists: %s", string(body))
-	} else {
-		body, _ := io.ReadAll(resp.Body)
+	default:
 		return fmt.Errorf("failed to create webhook, status %d: %s", resp.StatusCode, string(body))
 	}
 }
@@ -530,7 +552,7 @@ func buildWebhookURLAndSSLValidation(rawURL string) (string, bool, error) {
 	return u.String(), enableSSL, nil
 }
 
-func runService(cfg *Config) {
+func runService() {
 	addr := fmt.Sprintf(":%s", PORT)
 
 	http.HandleFunc("/gitlab/webhook", func(w http.ResponseWriter, r *http.Request) {
@@ -540,6 +562,22 @@ func runService(cfg *Config) {
 			return
 		}
 
+		// Always reload config for each request
+		cfg, err := loadConfig()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintln(w, "Failed to load config")
+			fmt.Println("Error loading config:", err)
+			return
+		}
+
+		if len(cfg.Jobs) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintln(w, "No pipeline jobs configured. Please run wizard first.")
+			return
+		}
+
+		// Validate token
 		token := r.Header.Get("X-Gitlab-Token")
 		if token == "" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -561,12 +599,27 @@ func runService(cfg *Config) {
 			return
 		}
 
-		// Optional: You could parse the GitLab event from header X-Gitlab-Event and check job.Event
+		// Check if event type matches what is configured
+		eventType := r.Header.Get("X-Gitlab-Event")
+		expectedEventKey, ok := allowedEvents[job.Event]
+		if !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "Configured job has unsupported event: %s\n", job.Event)
+			return
+		}
 
+		// Map from GitLab header event names to our keys
+
+		if gitlabEventMap[eventType] != expectedEventKey {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprintf(w, "Event type '%s' does not match job configuration '%s'\n", eventType, job.Event)
+			return
+		}
+
+		// Run the job in the background
 		go func(j *PipelineJob) {
 			fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
-			err := runCommands(j.Workspace, j.Commands)
-			if err != nil {
+			if err := runCommands(j.Workspace, j.Commands); err != nil {
 				fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, err)
 			} else {
 				fmt.Printf("Commands finished successfully for %s\n", j.ProjectName)
@@ -611,4 +664,27 @@ func init() {
 		PORT = "9091"
 		log.Println("⚠️  C1CD_PORT not set, using default 9091")
 	}
+}
+
+func getAllowedEventKeys() []string {
+	keys := make([]string, 0, len(allowedEvents))
+	for k := range allowedEvents {
+		keys = append(keys, k)
+	}
+
+	return keys
+}
+
+var gitlabEventMap = map[string]string{
+	"Push Hook":               "push_events",
+	"Merge Request Hook":      "merge_requests_events",
+	"Tag Push Hook":           "tag_push_events",
+	"Issue Hook":              "issues_events",
+	"Note Hook":               "note_events",
+	"Job Hook":                "job_events",
+	"Pipeline Hook":           "pipeline_events",
+	"Wiki Page Hook":          "wiki_page_events",
+	"Release Hook":            "release_events",
+	"Confidential Issue Hook": "confidential_issues_events",
+	"Confidential Note Hook":  "confidential_note_events",
 }
