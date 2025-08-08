@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +18,10 @@ import (
 )
 
 const configPath = ".config/drcicd/config.json"
+
+var (
+	PORT string
+)
 
 type Config struct {
 	Token string        `json:"token"`
@@ -247,10 +252,10 @@ func wizard(token string) (PipelineJob, error) {
 	// 3. Webhook URL
 	webhookRaw := ""
 	urlPrompt := &survey.Input{
-		Message: "Enter your webhook base URL (include scheme, e.g. https://webhooks.example.com or http://192.168.1.1:8080):",
+		Message: "Enter your webhook base URL (include scheme, e.g. https://webhooks.example.com or http://192.168.1.1:9091):",
 		Help:    "No path needed; /gitlab/webhook will be appended automatically.",
 	}
-	err = survey.AskOne(urlPrompt, &webhookRaw, survey.WithValidator(func(val interface{}) error {
+	err = survey.AskOne(urlPrompt, &webhookRaw, survey.WithValidator(func(val any) error {
 		s, ok := val.(string)
 		if !ok || s == "" {
 			return errors.New("webhook URL cannot be empty")
@@ -526,8 +531,7 @@ func buildWebhookURLAndSSLValidation(rawURL string) (string, bool, error) {
 }
 
 func runService(cfg *Config) {
-	// For simplicity, listen on :8080 - you can make this configurable
-	addr := ":8080"
+	addr := fmt.Sprintf(":%s", PORT)
 
 	http.HandleFunc("/gitlab/webhook", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -599,4 +603,12 @@ func runCommands(workspace string, commands []string) error {
 		}
 	}
 	return nil
+}
+
+func init() {
+	PORT = os.Getenv("C1CD_PORT")
+	if PORT == "" {
+		PORT = "9091"
+		log.Println("⚠️  C1CD_PORT not set, using default 9091")
+	}
 }
