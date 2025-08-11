@@ -351,6 +351,7 @@ func randInt(max int) int {
 	return int(b[0]) % max
 }
 
+
 func buildWebhookURLAndSSLValidation(rawURL, provider string) (string, bool, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

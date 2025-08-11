@@ -217,22 +217,29 @@ func validateGitHubSignature(payload []byte, signature, secret string) bool {
 }
 
 func runCommands(workspace string, commands []string) error {
-	for _, cmdline := range commands {
-		fmt.Printf("Executing: %s\n", cmdline)
-
-		parts := strings.Fields(cmdline)
-		if len(parts) == 0 {
-			continue
-		}
-		cmd := exec.Command(parts[0], parts[1:]...)
-		cmd.Dir = workspace
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err := cmd.Run()
-		if err != nil {
-			return fmt.Errorf("command failed: %s, error: %w", cmdline, err)
-		}
+	if len(commands) == 0 {
+		return nil
 	}
+
+	// Join all commands with && and execute in a single shell
+	// This preserves directory changes and environment between commands
+	allCommands := strings.Join(commands, " && ")
+	fullCommand := fmt.Sprintf("cd %s && %s", workspace, allCommands)
+	
+	fmt.Printf("Executing command chain in %s:\n", workspace)
+	for _, cmdline := range commands {
+		fmt.Printf("  %s\n", cmdline)
+	}
+
+	cmd := exec.Command("bash", "-c", fullCommand)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command chain failed, error: %w", err)
+	}
+	
 	return nil
 }
