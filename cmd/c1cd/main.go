@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"c1cd/internal/auth"
 	"c1cd/internal/config"
@@ -37,10 +38,82 @@ func main() {
 		return
 	}
 
+	// Handle pipeline list command
+	if len(args) >= 1 && args[0] == "ls" {
+		err := listPipelines()
+		if err != nil {
+			fmt.Println("Error listing pipelines:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle pipeline remove command
+	if len(args) >= 2 && args[0] == "rm" {
+		err := removePipeline(args[1])
+		if err != nil {
+			fmt.Println("Error removing pipeline:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Main wizard - prompt for provider and token selection
 	err := wizard.RunMainWizard()
 	if err != nil {
 		fmt.Println("Wizard error:", err)
 		os.Exit(1)
 	}
+}
+
+func listPipelines() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if len(cfg.Jobs) == 0 {
+		fmt.Println("No pipelines configured.")
+		return nil
+	}
+
+	fmt.Printf("%-3s %-10s %-30s %-15s %-10s\n", "ID", "Provider", "Project", "Event", "Workspace")
+	fmt.Println("------------------------------------------------------------------------------------")
+	
+	for i, job := range cfg.Jobs {
+		fmt.Printf("%-3d %-10s %-30s %-15s %-10s\n", 
+			i, 
+			job.Provider, 
+			job.ProjectName, 
+			job.Event, 
+			job.Workspace)
+	}
+	return nil
+}
+
+func removePipeline(idStr string) error {
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return fmt.Errorf("invalid pipeline ID: %s", idStr)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if id < 0 || id >= len(cfg.Jobs) {
+		return fmt.Errorf("pipeline ID %d not found", id)
+	}
+
+	removedJob := cfg.Jobs[id]
+	cfg.Jobs = append(cfg.Jobs[:id], cfg.Jobs[id+1:]...)
+
+	err = config.Save(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Printf("Removed pipeline: %s (%s)\n", removedJob.ProjectName, removedJob.Provider)
+	return nil
 }
