@@ -7,6 +7,7 @@ import (
 
 	"c1cd/internal/auth"
 	"c1cd/internal/config"
+	"c1cd/internal/providers"
 	"c1cd/internal/service"
 	"c1cd/internal/wizard"
 )
@@ -107,6 +108,20 @@ func removePipeline(idStr string) error {
 	}
 
 	removedJob := cfg.Jobs[id]
+	
+	// Try to remove webhook if webhook ID is available
+	if removedJob.WebhookID != 0 {
+		// Find the appropriate token for this provider
+		if tokens, exists := cfg.Tokens[removedJob.Provider]; exists && len(tokens) > 0 {
+			token := tokens[0].Token // Use first available token
+			if err := providers.RemoveWebhook(token, removedJob); err != nil {
+				fmt.Printf("Warning: Failed to remove webhook: %v\n", err)
+			}
+		} else {
+			fmt.Printf("Warning: No token found for provider '%s', webhook not removed\n", removedJob.Provider)
+		}
+	}
+	
 	cfg.Jobs = append(cfg.Jobs[:id], cfg.Jobs[id+1:]...)
 
 	err = config.Save(cfg)

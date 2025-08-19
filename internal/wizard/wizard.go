@@ -277,7 +277,7 @@ func runWizard(token, provider string) (config.PipelineJob, error) {
 
 	job.Secret = generateSecret(20)
 
-	err = providers.CreateWebhook(token, job)
+	err = providers.CreateWebhook(token, &job)
 	if err != nil {
 		return job, fmt.Errorf("failed to create webhook: %w", err)
 	}

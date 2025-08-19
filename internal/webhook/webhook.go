@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,6 +107,23 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check branch filtering for GitLab webhooks
+	if len(job.Branches) > 0 {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintln(w, "Failed to read request body")
+			return
+		}
+		
+		branch := extractBranchFromGitLabPayload(body)
+		if branch != "" && !isBranchAllowed(branch, job.Branches) {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "Branch '%s' not in allowed branches, skipping pipeline", branch)
+			return
+		}
+	}
+
 	go func(j *config.PipelineJob) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
 		if err := runCommands(j.Workspace, j.Commands); err != nil {
@@ -186,6 +204,16 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check branch filtering for GitHub webhooks
+	if len(job.Branches) > 0 {
+		branch := extractBranchFromGitHubPayload(payload)
+		if branch != "" && !isBranchAllowed(branch, job.Branches) {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "Branch '%s' not in allowed branches, skipping pipeline", branch)
+			return
+		}
+	}
+
 	go func(j *config.PipelineJob) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
 		if err := runCommands(j.Workspace, j.Commands); err != nil {
@@ -242,4 +270,47 @@ func runCommands(workspace string, commands []string) error {
 	}
 	
 	return nil
+}
+
+func extractBranchFromGitLabPayload(payload []byte) string {
+	var gitlabPayload struct {
+		Ref string `json:"ref"`
+	}
+	
+	if err := json.Unmarshal(payload, &gitlabPayload); err != nil {
+		return ""
+	}
+	
+	// GitLab ref format: refs/heads/branch-name
+	if strings.HasPrefix(gitlabPayload.Ref, "refs/heads/") {
+		return strings.TrimPrefix(gitlabPayload.Ref, "refs/heads/")
+	}
+	
+	return ""
+}
+
+func extractBranchFromGitHubPayload(payload []byte) string {
+	var githubPayload struct {
+		Ref string `json:"ref"`
+	}
+	
+	if err := json.Unmarshal(payload, &githubPayload); err != nil {
+		return ""
+	}
+	
+	// GitHub ref format: refs/heads/branch-name
+	if strings.HasPrefix(githubPayload.Ref, "refs/heads/") {
+		return strings.TrimPrefix(githubPayload.Ref, "refs/heads/")
+	}
+	
+	return ""
+}
+
+func isBranchAllowed(branch string, allowedBranches []string) bool {
+	for _, allowed := range allowedBranches {
+		if branch == allowed {
+			return true
+		}
+	}
+	return false
 }

@@ -30,6 +30,7 @@ type PipelineJob struct {
 	WebhookURL            string   `json:"webhook_url"`
 	EnableSSLVerification bool     `json:"enable_ssl_verification"`
 	Secret                string   `json:"secret"`
+	WebhookID             int      `json:"webhook_id,omitempty"`
 }
 
 func Load() (*Config, error) {

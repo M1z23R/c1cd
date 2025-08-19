@@ -158,7 +158,7 @@ func searchGitHubRepos(token, search string) ([]Project, error) {
 	return projects, nil
 }
 
-func CreateWebhook(token string, job config.PipelineJob) error {
+func CreateWebhook(token string, job *config.PipelineJob) error {
 	switch job.Provider {
 	case "gitlab":
 		return createGitLabWebhook(token, job)
@@ -191,7 +191,7 @@ var githubAllowedEvents = map[string]string{
 	"on_tag":          "create",
 }
 
-func createGitLabWebhook(token string, job config.PipelineJob) error {
+func createGitLabWebhook(token string, job *config.PipelineJob) error {
 	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%d/hooks", job.ProjectID)
 
 	eventKey, ok := allowedEvents[job.Event]
@@ -229,6 +229,12 @@ func createGitLabWebhook(token string, job config.PipelineJob) error {
 
 	switch resp.StatusCode {
 	case 201:
+		var webhookResponse struct {
+			ID int `json:"id"`
+		}
+		if err := json.Unmarshal(body, &webhookResponse); err == nil {
+			job.WebhookID = webhookResponse.ID
+		}
 		fmt.Println("Webhook created successfully!")
 		return nil
 	case 409:
@@ -238,7 +244,7 @@ func createGitLabWebhook(token string, job config.PipelineJob) error {
 	}
 }
 
-func createGitHubWebhook(token string, job config.PipelineJob) error {
+func createGitHubWebhook(token string, job *config.PipelineJob) error {
 	parts := strings.SplitN(job.ProjectName, "/", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid GitHub repository format: %s, expected owner/repo", job.ProjectName)
@@ -287,6 +293,12 @@ func createGitHubWebhook(token string, job config.PipelineJob) error {
 
 	switch resp.StatusCode {
 	case 201:
+		var webhookResponse struct {
+			ID int `json:"id"`
+		}
+		if err := json.Unmarshal(body, &webhookResponse); err == nil {
+			job.WebhookID = webhookResponse.ID
+		}
 		fmt.Println("Webhook created successfully!")
 		return nil
 	case 422:
@@ -294,6 +306,81 @@ func createGitHubWebhook(token string, job config.PipelineJob) error {
 	default:
 		return fmt.Errorf("failed to create webhook, status %d: %s", resp.StatusCode, string(body))
 	}
+}
+
+func RemoveWebhook(token string, job config.PipelineJob) error {
+	switch job.Provider {
+	case "gitlab":
+		return removeGitLabWebhook(token, job)
+	case "github":
+		return removeGitHubWebhook(token, job)
+	default:
+		return fmt.Errorf("unsupported provider: %s", job.Provider)
+	}
+}
+
+func removeGitLabWebhook(token string, job config.PipelineJob) error {
+	if job.WebhookID == 0 {
+		return fmt.Errorf("no webhook ID stored for this job")
+	}
+	
+	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%d/hooks/%d", job.ProjectID, job.WebhookID)
+	
+	req, err := http.NewRequest("DELETE", apiURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode == 204 {
+		fmt.Println("GitLab webhook removed successfully!")
+		return nil
+	}
+	
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("failed to remove GitLab webhook, status %d: %s", resp.StatusCode, string(body))
+}
+
+func removeGitHubWebhook(token string, job config.PipelineJob) error {
+	if job.WebhookID == 0 {
+		return fmt.Errorf("no webhook ID stored for this job")
+	}
+	
+	parts := strings.SplitN(job.ProjectName, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid GitHub repository format: %s, expected owner/repo", job.ProjectName)
+	}
+	owner, repo := parts[0], parts[1]
+	
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks/%d", owner, repo, job.WebhookID)
+	
+	req, err := http.NewRequest("DELETE", apiURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "token "+token)
+	
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode == 204 {
+		fmt.Println("GitHub webhook removed successfully!")
+		return nil
+	}
+	
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("failed to remove GitHub webhook, status %d: %s", resp.StatusCode, string(body))
 }
 
 func GetAllowedEventKeys(provider string) []string {
