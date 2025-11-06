@@ -22,10 +22,10 @@ type Project struct {
 	PathWithNamespace string `json:"path_with_namespace"`
 }
 
-func GetUser(token, provider string) (*User, error) {
+func GetUser(token, provider, serverURL string) (*User, error) {
 	switch provider {
 	case "gitlab":
-		return getGitLabUser(token)
+		return getGitLabUser(token, serverURL)
 	case "github":
 		return getGitHubUser(token)
 	default:
@@ -33,8 +33,11 @@ func GetUser(token, provider string) (*User, error) {
 	}
 }
 
-func getGitLabUser(token string) (*User, error) {
-	req, err := http.NewRequest("GET", "https://gitlab.com/api/v4/user", nil)
+func getGitLabUser(token, serverURL string) (*User, error) {
+	baseURL := getGitLabBaseURL(serverURL)
+	apiURL := baseURL + "/api/v4/user"
+
+	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +58,15 @@ func getGitLabUser(token string) (*User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+// getGitLabBaseURL returns the base URL for GitLab API calls
+// If serverURL is empty, defaults to gitlab.com
+func getGitLabBaseURL(serverURL string) string {
+	if serverURL == "" {
+		return "https://gitlab.com"
+	}
+	return serverURL
 }
 
 func getGitHubUser(token string) (*User, error) {
@@ -84,10 +96,10 @@ func getGitHubUser(token string) (*User, error) {
 	return &User{ID: ghUser.ID, Username: ghUser.Login}, nil
 }
 
-func SearchProjects(token, search, provider string) ([]Project, error) {
+func SearchProjects(token, search, provider, serverURL string) ([]Project, error) {
 	switch provider {
 	case "gitlab":
-		return searchGitLabProjects(token, search)
+		return searchGitLabProjects(token, search, serverURL)
 	case "github":
 		return searchGitHubRepos(token, search)
 	default:
@@ -95,8 +107,10 @@ func SearchProjects(token, search, provider string) ([]Project, error) {
 	}
 }
 
-func searchGitLabProjects(token, search string) ([]Project, error) {
-	apiURL := "https://gitlab.com/api/v4/projects?membership=true&per_page=20&search=" + url.QueryEscape(search)
+func searchGitLabProjects(token, search, serverURL string) ([]Project, error) {
+	baseURL := getGitLabBaseURL(serverURL)
+	apiURL := baseURL + "/api/v4/projects?membership=true&per_page=20&search=" + url.QueryEscape(search)
+
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return nil, err
@@ -158,10 +172,10 @@ func searchGitHubRepos(token, search string) ([]Project, error) {
 	return projects, nil
 }
 
-func CreateWebhook(token string, job *config.PipelineJob) error {
+func CreateWebhook(token, serverURL string, job *config.PipelineJob) error {
 	switch job.Provider {
 	case "gitlab":
-		return createGitLabWebhook(token, job)
+		return createGitLabWebhook(token, serverURL, job)
 	case "github":
 		return createGitHubWebhook(token, job)
 	default:
@@ -191,8 +205,9 @@ var githubAllowedEvents = map[string]string{
 	"on_tag":          "create",
 }
 
-func createGitLabWebhook(token string, job *config.PipelineJob) error {
-	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%d/hooks", job.ProjectID)
+func createGitLabWebhook(token, serverURL string, job *config.PipelineJob) error {
+	baseURL := getGitLabBaseURL(serverURL)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/hooks", baseURL, job.ProjectID)
 
 	eventKey, ok := allowedEvents[job.Event]
 	if !ok {
@@ -308,10 +323,10 @@ func createGitHubWebhook(token string, job *config.PipelineJob) error {
 	}
 }
 
-func RemoveWebhook(token string, job config.PipelineJob) error {
+func RemoveWebhook(token, serverURL string, job config.PipelineJob) error {
 	switch job.Provider {
 	case "gitlab":
-		return removeGitLabWebhook(token, job)
+		return removeGitLabWebhook(token, serverURL, job)
 	case "github":
 		return removeGitHubWebhook(token, job)
 	default:
@@ -319,12 +334,13 @@ func RemoveWebhook(token string, job config.PipelineJob) error {
 	}
 }
 
-func removeGitLabWebhook(token string, job config.PipelineJob) error {
+func removeGitLabWebhook(token, serverURL string, job config.PipelineJob) error {
 	if job.WebhookID == 0 {
 		return fmt.Errorf("no webhook ID stored for this job")
 	}
-	
-	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%d/hooks/%d", job.ProjectID, job.WebhookID)
+
+	baseURL := getGitLabBaseURL(serverURL)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/hooks/%d", baseURL, job.ProjectID, job.WebhookID)
 	
 	req, err := http.NewRequest("DELETE", apiURL, nil)
 	if err != nil {

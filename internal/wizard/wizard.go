@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"c1cd/internal/config"
@@ -37,7 +37,7 @@ func RunMainWizard() error {
 		return err
 	}
 
-	job, err := runWizard(tokenInfo.Token, provider)
+	job, err := runWizard(tokenInfo.Token, provider, tokenInfo.ServerURL)
 	if err != nil {
 		return fmt.Errorf("wizard error: %w", err)
 	}
@@ -82,7 +82,15 @@ func selectTokenForProvider(cfg *config.Config, provider string) (*config.TokenI
 
 	options := make([]string, len(tokens))
 	for i, token := range tokens {
-		options[i] = fmt.Sprintf("%s (ID: %d)", token.Username, token.UserID)
+		serverDisplay := token.ServerURL
+		if serverDisplay == "" {
+			serverDisplay = "gitlab.com"
+		}
+		if provider == "gitlab" {
+			options[i] = fmt.Sprintf("%s (ID: %d) [%s]", token.Username, token.UserID, serverDisplay)
+		} else {
+			options[i] = fmt.Sprintf("%s (ID: %d)", token.Username, token.UserID)
+		}
 	}
 
 	var selected string
@@ -104,7 +112,7 @@ func selectTokenForProvider(cfg *config.Config, provider string) (*config.TokenI
 	return nil, errors.New("token selection failed")
 }
 
-func runWizard(token, provider string) (config.PipelineJob, error) {
+func runWizard(token, provider, serverURL string) (config.PipelineJob, error) {
 	var job config.PipelineJob
 	job.Provider = provider
 
@@ -115,7 +123,7 @@ func runWizard(token, provider string) (config.PipelineJob, error) {
 		return job, err
 	}
 
-	projects, err := providers.SearchProjects(token, projectName, provider)
+	projects, err := providers.SearchProjects(token, projectName, provider, serverURL)
 	if err != nil {
 		return job, err
 	}
@@ -277,7 +285,7 @@ func runWizard(token, provider string) (config.PipelineJob, error) {
 
 	job.Secret = generateSecret(20)
 
-	err = providers.CreateWebhook(token, &job)
+	err = providers.CreateWebhook(token, serverURL, &job)
 	if err != nil {
 		return job, fmt.Errorf("failed to create webhook: %w", err)
 	}
@@ -353,14 +361,17 @@ func randInt(max int) int {
 
 
 func buildWebhookURLAndSSLValidation(rawURL, provider string) (string, bool, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", false, fmt.Errorf("invalid URL: %w", err)
-	}
-	u.Path = filepath.Join(u.Path, provider, "webhook")
-	enableSSL := false
-	if u.Scheme == "https" {
-		enableSSL = true
-	}
-	return u.String(), enableSSL, nil
+    u, err := url.Parse(rawURL)
+    if err != nil {
+        return "", false, fmt.Errorf("invalid URL: %w", err)
+    }
+
+    segments := []string{}
+    if u.Path != "" && u.Path != "/" {
+        segments = append(segments, strings.Split(u.Path, "/")...)
+    }
+    segments = append(segments, provider, "webhook")
+    u.Path = path.Join(segments...)
+    enableSSL := u.Scheme == "https"
+    return u.String(), enableSSL, nil
 }

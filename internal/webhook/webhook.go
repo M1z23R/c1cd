@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"c1cd/internal/config"
@@ -249,28 +250,29 @@ func runCommands(workspace string, commands []string) error {
 		return nil
 	}
 
-	// Join all commands with && and execute in a single shell
-	// This preserves directory changes and environment between commands
-	allCommands := strings.Join(commands, " && ")
-	fullCommand := fmt.Sprintf("cd %s && %s", workspace, allCommands)
-	
-	fmt.Printf("Executing command chain in %s:\n", workspace)
-	for _, cmdline := range commands {
-		fmt.Printf("  %s\n", cmdline)
+	for _, c := range commands {
+		fmt.Printf("Executing in %s: %s\n", workspace, c)
+
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("cmd", "/C", c) // Windows cmd
+		} else {
+			cmd = exec.Command("bash", "-c", c) // Unix shell
+		}
+
+		cmd.Dir = workspace
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Env = os.Environ()
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("command failed: %s, error: %w", c, err)
+		}
 	}
 
-	cmd := exec.Command("bash", "-c", fullCommand)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("command chain failed, error: %w", err)
-	}
-	
 	return nil
 }
+
 
 func extractBranchFromGitLabPayload(payload []byte) string {
 	var gitlabPayload struct {

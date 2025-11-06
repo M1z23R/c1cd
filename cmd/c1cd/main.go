@@ -113,8 +113,9 @@ func removePipeline(idStr string) error {
 	if removedJob.WebhookID != 0 {
 		// Find the appropriate token for this provider
 		if tokens, exists := cfg.Tokens[removedJob.Provider]; exists && len(tokens) > 0 {
-			token := tokens[0].Token // Use first available token
-			if err := providers.RemoveWebhook(token, removedJob); err != nil {
+			token := tokens[0].Token       // Use first available token
+			serverURL := tokens[0].ServerURL // Get server URL from token
+			if err := providers.RemoveWebhook(token, serverURL, removedJob); err != nil {
 				fmt.Printf("Warning: Failed to remove webhook: %v\n", err)
 			}
 		} else {

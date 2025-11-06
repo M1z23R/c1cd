@@ -14,9 +14,10 @@ type Config struct {
 }
 
 type TokenInfo struct {
-	Token    string `json:"token"`
-	Username string `json:"username"`
-	UserID   int    `json:"user_id"`
+	Token     string `json:"token"`
+	Username  string `json:"username"`
+	UserID    int    `json:"user_id"`
+	ServerURL string `json:"server_url,omitempty"` // For custom GitLab instances
 }
 
 type PipelineJob struct {
