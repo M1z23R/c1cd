@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"c1cd/internal/config"
+	"c1cd/internal/providers"
 )
 
 var allowedEvents = map[string]string{
@@ -108,15 +109,19 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, "Failed to read request body")
+		return
+	}
+
+	// Extract commit SHA from payload
+	commitSHA := extractCommitSHAFromGitLabPayload(body)
+
 	// Check branch filtering for GitLab webhooks
 	if len(job.Branches) > 0 {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintln(w, "Failed to read request body")
-			return
-		}
-		
 		branch := extractBranchFromGitLabPayload(body)
 		if branch != "" && !isBranchAllowed(branch, job.Branches) {
 			w.WriteHeader(http.StatusOK)
@@ -125,14 +130,64 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	go func(j *config.PipelineJob) {
+	go func(j *config.PipelineJob, sha string) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
+
+		// Get token for this job
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Printf("Error loading config for status update: %v\n", err)
+		} else {
+			// Find the token and serverURL for this provider
+			token, serverURL := findTokenForJob(cfg, j)
+
+			// Send "running" status if we have commit SHA
+			if sha != "" && token != "" {
+				if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "running"); err != nil {
+					fmt.Printf("Warning: failed to update commit status to running: %v\n", err)
+				} else {
+					fmt.Printf("Commit status updated to 'running' for SHA %s\n", sha)
+				}
+			}
+		}
+
+		// Run the commands
 		if err := runCommands(j.Workspace, j.Commands); err != nil {
 			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, err)
+
+			// Update status to failed
+			if sha != "" {
+				cfg, err := config.Load()
+				if err == nil {
+					token, serverURL := findTokenForJob(cfg, j)
+					if token != "" {
+						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "failed"); err != nil {
+							fmt.Printf("Warning: failed to update commit status to failed: %v\n", err)
+						} else {
+							fmt.Printf("Commit status updated to 'failed' for SHA %s\n", sha)
+						}
+					}
+				}
+			}
 		} else {
 			fmt.Printf("Commands finished successfully for %s\n", j.ProjectName)
+
+			// Update status to success
+			if sha != "" {
+				cfg, err := config.Load()
+				if err == nil {
+					token, serverURL := findTokenForJob(cfg, j)
+					if token != "" {
+						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "success"); err != nil {
+							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
+						} else {
+							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+						}
+					}
+				}
+			}
 		}
-	}(job)
+	}(job, commitSHA)
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "Webhook received, running pipeline.")
@@ -205,6 +260,9 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract commit SHA from payload
+	commitSHA := extractCommitSHAFromGitHubPayload(payload)
+
 	// Check branch filtering for GitHub webhooks
 	if len(job.Branches) > 0 {
 		branch := extractBranchFromGitHubPayload(payload)
@@ -215,14 +273,64 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	go func(j *config.PipelineJob) {
+	go func(j *config.PipelineJob, sha string) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
+
+		// Get token for this job
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Printf("Error loading config for status update: %v\n", err)
+		} else {
+			// Find the token for this provider
+			token, serverURL := findTokenForJob(cfg, j)
+
+			// Send "pending" status if we have commit SHA (GitHub uses "pending" instead of "running")
+			if sha != "" && token != "" {
+				if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "pending"); err != nil {
+					fmt.Printf("Warning: failed to update commit status to pending: %v\n", err)
+				} else {
+					fmt.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
+				}
+			}
+		}
+
+		// Run the commands
 		if err := runCommands(j.Workspace, j.Commands); err != nil {
 			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, err)
+
+			// Update status to failure
+			if sha != "" {
+				cfg, err := config.Load()
+				if err == nil {
+					token, serverURL := findTokenForJob(cfg, j)
+					if token != "" {
+						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "failure"); err != nil {
+							fmt.Printf("Warning: failed to update commit status to failure: %v\n", err)
+						} else {
+							fmt.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
+						}
+					}
+				}
+			}
 		} else {
 			fmt.Printf("Commands finished successfully for %s\n", j.ProjectName)
+
+			// Update status to success
+			if sha != "" {
+				cfg, err := config.Load()
+				if err == nil {
+					token, serverURL := findTokenForJob(cfg, j)
+					if token != "" {
+						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "success"); err != nil {
+							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
+						} else {
+							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+						}
+					}
+				}
+			}
 		}
-	}(job)
+	}(job, commitSHA)
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "Webhook received, running pipeline.")
@@ -274,20 +382,89 @@ func runCommands(workspace string, commands []string) error {
 }
 
 
+func extractCommitSHAFromGitLabPayload(payload []byte) string {
+	// GitLab webhook payloads have different structures for different events
+	// For push events, the commit SHA is in checkout_sha or after field
+	var gitlabPayload struct {
+		CheckoutSHA string `json:"checkout_sha"` // Push events
+		After       string `json:"after"`        // Push events (commit SHA after push)
+		Commit      struct {
+			ID string `json:"id"` // Other events like merge request
+		} `json:"commit"`
+		ObjectAttributes struct {
+			LastCommit struct {
+				ID string `json:"id"`
+			} `json:"last_commit"`
+		} `json:"object_attributes"`
+	}
+
+	if err := json.Unmarshal(payload, &gitlabPayload); err != nil {
+		return ""
+	}
+
+	// Try different fields in order of preference
+	if gitlabPayload.CheckoutSHA != "" && gitlabPayload.CheckoutSHA != "0000000000000000000000000000000000000000" {
+		return gitlabPayload.CheckoutSHA
+	}
+	if gitlabPayload.After != "" && gitlabPayload.After != "0000000000000000000000000000000000000000" {
+		return gitlabPayload.After
+	}
+	if gitlabPayload.Commit.ID != "" {
+		return gitlabPayload.Commit.ID
+	}
+	if gitlabPayload.ObjectAttributes.LastCommit.ID != "" {
+		return gitlabPayload.ObjectAttributes.LastCommit.ID
+	}
+
+	return ""
+}
+
 func extractBranchFromGitLabPayload(payload []byte) string {
 	var gitlabPayload struct {
 		Ref string `json:"ref"`
 	}
-	
+
 	if err := json.Unmarshal(payload, &gitlabPayload); err != nil {
 		return ""
 	}
-	
+
 	// GitLab ref format: refs/heads/branch-name
 	if strings.HasPrefix(gitlabPayload.Ref, "refs/heads/") {
 		return strings.TrimPrefix(gitlabPayload.Ref, "refs/heads/")
 	}
-	
+
+	return ""
+}
+
+func extractCommitSHAFromGitHubPayload(payload []byte) string {
+	// GitHub webhook payloads have different structures for different events
+	var githubPayload struct {
+		After string `json:"after"` // Push events
+		HeadCommit struct {
+			ID string `json:"id"`
+		} `json:"head_commit"` // Push events
+		PullRequest struct {
+			Head struct {
+				SHA string `json:"sha"`
+			} `json:"head"`
+		} `json:"pull_request"` // Pull request events
+	}
+
+	if err := json.Unmarshal(payload, &githubPayload); err != nil {
+		return ""
+	}
+
+	// Try different fields in order of preference
+	if githubPayload.After != "" && githubPayload.After != "0000000000000000000000000000000000000000" {
+		return githubPayload.After
+	}
+	if githubPayload.HeadCommit.ID != "" {
+		return githubPayload.HeadCommit.ID
+	}
+	if githubPayload.PullRequest.Head.SHA != "" {
+		return githubPayload.PullRequest.Head.SHA
+	}
+
 	return ""
 }
 
@@ -295,16 +472,16 @@ func extractBranchFromGitHubPayload(payload []byte) string {
 	var githubPayload struct {
 		Ref string `json:"ref"`
 	}
-	
+
 	if err := json.Unmarshal(payload, &githubPayload); err != nil {
 		return ""
 	}
-	
+
 	// GitHub ref format: refs/heads/branch-name
 	if strings.HasPrefix(githubPayload.Ref, "refs/heads/") {
 		return strings.TrimPrefix(githubPayload.Ref, "refs/heads/")
 	}
-	
+
 	return ""
 }
 
@@ -315,4 +492,19 @@ func isBranchAllowed(branch string, allowedBranches []string) bool {
 		}
 	}
 	return false
+}
+
+// findTokenForJob finds the appropriate token and serverURL for a job
+func findTokenForJob(cfg *config.Config, job *config.PipelineJob) (token string, serverURL string) {
+	// Look for tokens for this provider
+	tokens, ok := cfg.Tokens[job.Provider]
+	if !ok || len(tokens) == 0 {
+		return "", ""
+	}
+
+	// For GitLab, we need to match by project ID if there are multiple tokens
+	// For simplicity, we'll use the first token of the matching provider
+	// In the future, this could be enhanced to match by project ID or user
+	tokenInfo := tokens[0]
+	return tokenInfo.Token, tokenInfo.ServerURL
 }

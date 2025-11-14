@@ -415,3 +415,114 @@ func GetAllowedEventKeys(provider string) []string {
 	}
 	return keys
 }
+
+// UpdateCommitStatus updates the commit status on GitHub or GitLab
+func UpdateCommitStatus(token, serverURL string, job *config.PipelineJob, commitSHA, state string) error {
+	switch job.Provider {
+	case "gitlab":
+		return updateGitLabCommitStatus(token, serverURL, job, commitSHA, state)
+	case "github":
+		return updateGitHubCommitStatus(token, job, commitSHA, state)
+	default:
+		return fmt.Errorf("unsupported provider: %s", job.Provider)
+	}
+}
+
+// updateGitLabCommitStatus updates commit status via GitLab API
+// States: running, pending, success, failed, canceled
+func updateGitLabCommitStatus(token, serverURL string, job *config.PipelineJob, commitSHA, state string) error {
+	baseURL := getGitLabBaseURL(serverURL)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/statuses/%s", baseURL, job.ProjectID, commitSHA)
+
+	payload := map[string]any{
+		"state": state,
+		"name":  "c1cd Build",
+		"description": getStatusDescription(state),
+	}
+
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("failed to update GitLab commit status, status %d: %s", resp.StatusCode, string(body))
+}
+
+// updateGitHubCommitStatus updates commit status via GitHub API
+// States: pending, success, error, failure
+func updateGitHubCommitStatus(token string, job *config.PipelineJob, commitSHA, state string) error {
+	parts := strings.SplitN(job.ProjectName, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid GitHub repository format: %s, expected owner/repo", job.ProjectName)
+	}
+	owner, repo := parts[0], parts[1]
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/statuses/%s", owner, repo, commitSHA)
+
+	payload := map[string]any{
+		"state":   state,
+		"context": "c1cd Build",
+		"description": getStatusDescription(state),
+	}
+
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("failed to update GitHub commit status, status %d: %s", resp.StatusCode, string(body))
+}
+
+// getStatusDescription returns a human-readable description for each status state
+func getStatusDescription(state string) string {
+	descriptions := map[string]string{
+		"pending": "Build is pending",
+		"running": "Build is running",
+		"success": "Build succeeded",
+		"failed":  "Build failed",
+		"failure": "Build failed",
+		"error":   "Build error",
+	}
+	if desc, ok := descriptions[state]; ok {
+		return desc
+	}
+	return "Build status: " + state
+}
