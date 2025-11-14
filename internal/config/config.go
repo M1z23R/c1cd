@@ -24,6 +24,7 @@ type PipelineJob struct {
 	Provider              string   `json:"provider"`
 	ProjectID             int      `json:"project_id"`
 	ProjectName           string   `json:"project_name"`
+	PipelineName          string   `json:"pipeline_name,omitempty"` // Custom name for commit status
 	Workspace             string   `json:"workspace"`
 	Event                 string   `json:"event"`
 	Branches              []string `json:"branches"`

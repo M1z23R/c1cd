@@ -157,6 +157,20 @@ func runWizard(token, provider, serverURL string) (config.PipelineJob, error) {
 	job.ProjectID = projectID
 	job.ProjectName = projectNameFull
 
+	// Ask for custom pipeline name (optional)
+	pipelineName := ""
+	pipelineNamePrompt := &survey.Input{
+		Message: "Enter custom pipeline name (leave empty for default):",
+		Help:    "This will be used as the status name/context in GitHub/GitLab. Defaults: 'Build & Deploy' for GitLab, 'Build' for GitHub",
+	}
+	err = survey.AskOne(pipelineNamePrompt, &pipelineName)
+	if err != nil {
+		return job, err
+	}
+	if strings.TrimSpace(pipelineName) != "" {
+		job.PipelineName = strings.TrimSpace(pipelineName)
+	}
+
 	workspace := ""
 	wsPrompt := &survey.Input{Message: "Enter your workspace path (where commands will run):"}
 	err = survey.AskOne(wsPrompt, &workspace, survey.WithValidator(func(val any) error {
@@ -374,4 +388,202 @@ func buildWebhookURLAndSSLValidation(rawURL, provider string) (string, bool, err
     u.Path = path.Join(segments...)
     enableSSL := u.Scheme == "https"
     return u.String(), enableSSL, nil
+}
+
+// RunEditWizard walks through editing an existing pipeline with pre-filled values
+func RunEditWizard(jobIndex int) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if jobIndex < 0 || jobIndex >= len(cfg.Jobs) {
+		return fmt.Errorf("pipeline ID %d not found", jobIndex)
+	}
+
+	job := &cfg.Jobs[jobIndex]
+
+	// Get token for this provider
+	tokenInfo, err := selectTokenForProvider(cfg, job.Provider)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nEditing pipeline: %s (%s)\n", job.ProjectName, job.Provider)
+	fmt.Println("Press ENTER to keep current value, or type new value:")
+	fmt.Println()
+
+	// Pipeline Name
+	currentPipelineName := job.PipelineName
+	if currentPipelineName == "" {
+		if job.Provider == "gitlab" {
+			currentPipelineName = "Build & Deploy (default)"
+		} else {
+			currentPipelineName = "Build (default)"
+		}
+	}
+	pipelineName := ""
+	pipelineNamePrompt := &survey.Input{
+		Message: "Pipeline name:",
+		Default: job.PipelineName,
+		Help:    "Used as status name/context in GitHub/GitLab",
+	}
+	err = survey.AskOne(pipelineNamePrompt, &pipelineName)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(pipelineName) != "" {
+		job.PipelineName = strings.TrimSpace(pipelineName)
+	}
+
+	// Workspace
+	workspace := ""
+	wsPrompt := &survey.Input{
+		Message: "Workspace path:",
+		Default: job.Workspace,
+	}
+	err = survey.AskOne(wsPrompt, &workspace, survey.WithValidator(func(val any) error {
+		s, ok := val.(string)
+		if !ok || s == "" {
+			return errors.New("workspace path cannot be empty")
+		}
+		info, err := os.Stat(s)
+		if err != nil {
+			return fmt.Errorf("path error: %v", err)
+		}
+		if !info.IsDir() {
+			return errors.New("path is not a directory")
+		}
+		return nil
+	}))
+	if err != nil {
+		return err
+	}
+	job.Workspace = workspace
+
+	// Event
+	event := ""
+	eventPrompt := &survey.Select{
+		Message: "Event to listen for:",
+		Options: providers.GetAllowedEventKeys(job.Provider),
+		Default: job.Event,
+	}
+	err = survey.AskOne(eventPrompt, &event)
+	if err != nil {
+		return err
+	}
+	oldEvent := job.Event
+	job.Event = event
+
+	// Branches
+	branchesRaw := strings.Join(job.Branches, ", ")
+	branchesPrompt := &survey.Input{
+		Message: "Branches (comma separated, empty for all):",
+		Default: branchesRaw,
+	}
+	err = survey.AskOne(branchesPrompt, &branchesRaw)
+	if err != nil {
+		return err
+	}
+	branches := []string{}
+	for b := range strings.SplitSeq(branchesRaw, ",") {
+		if trimmed := strings.TrimSpace(b); trimmed != "" {
+			branches = append(branches, trimmed)
+		}
+	}
+	job.Branches = branches
+
+	// Commands
+	editCommands := false
+	editCmdsPrompt := &survey.Confirm{
+		Message: "Edit commands?",
+		Default: false,
+	}
+	err = survey.AskOne(editCmdsPrompt, &editCommands)
+	if err != nil {
+		return err
+	}
+
+	if editCommands {
+		fmt.Println("\nCurrent commands:")
+		for i, cmd := range job.Commands {
+			fmt.Printf("  %d: %s\n", i+1, cmd)
+		}
+		fmt.Println()
+
+		cmdMode := ""
+		cmdModePrompt := &survey.Select{
+			Message: "Add commands from:",
+			Options: []string{"File (.txt)", "Interactive input"},
+		}
+		err = survey.AskOne(cmdModePrompt, &cmdMode)
+		if err != nil {
+			return err
+		}
+
+		if cmdMode == "File (.txt)" {
+			filename := ""
+			filePrompt := &survey.Input{
+				Message: "Enter commands file path:",
+				Help:    "One command per line",
+			}
+			err = survey.AskOne(filePrompt, &filename, survey.WithValidator(func(val any) error {
+				s, ok := val.(string)
+				if !ok || s == "" {
+					return errors.New("filename cannot be empty")
+				}
+				info, err := os.Stat(s)
+				if err != nil {
+					return fmt.Errorf("file error: %v", err)
+				}
+				if info.IsDir() {
+					return errors.New("path is a directory, not file")
+				}
+				return nil
+			}))
+			if err != nil {
+				return err
+			}
+			cmds, err := readCommandsFromFile(filename)
+			if err != nil {
+				return err
+			}
+			job.Commands = cmds
+		} else {
+			fmt.Println("Enter commands one by one. Press ENTER twice to finish.")
+			cmds, err := readCommandsInteractive(os.Stdin)
+			if err != nil {
+				return err
+			}
+			job.Commands = cmds
+		}
+	}
+
+	// If event changed, we need to update the webhook
+	if oldEvent != event {
+		fmt.Println("\nEvent changed - webhook needs to be recreated...")
+
+		// Remove old webhook
+		if job.WebhookID != 0 {
+			err = providers.RemoveWebhook(tokenInfo.Token, tokenInfo.ServerURL, *job)
+			if err != nil {
+				fmt.Printf("Warning: Failed to remove old webhook: %v\n", err)
+			}
+		}
+
+		// Create new webhook
+		err = providers.CreateWebhook(tokenInfo.Token, tokenInfo.ServerURL, job)
+		if err != nil {
+			return fmt.Errorf("failed to create webhook: %w", err)
+		}
+	}
+
+	// Save config
+	err = config.Save(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Println("\nPipeline updated successfully!")
+	return nil
 }

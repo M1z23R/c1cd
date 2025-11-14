@@ -59,6 +59,16 @@ func main() {
 		return
 	}
 
+	// Handle pipeline edit command
+	if len(args) >= 2 && args[0] == "edit" {
+		err := editPipeline(args[1])
+		if err != nil {
+			fmt.Println("Error editing pipeline:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Main wizard - prompt for provider and token selection
 	err := wizard.RunMainWizard()
 	if err != nil {
@@ -78,15 +88,17 @@ func listPipelines() error {
 		return nil
 	}
 
-	fmt.Printf("%-3s %-10s %-30s %-15s %-10s\n", "ID", "Provider", "Project", "Event", "Workspace")
-	fmt.Println("------------------------------------------------------------------------------------")
-	
+	fmt.Printf("%-3s %-10s %-30s %-20s %-15s %-10s\n", "ID", "Provider", "Project", "Pipeline Name", "Event", "Workspace")
+	fmt.Println("--------------------------------------------------------------------------------------------------")
+
 	for i, job := range cfg.Jobs {
-		fmt.Printf("%-3d %-10s %-30s %-15s %-10s\n", 
-			i, 
-			job.Provider, 
-			job.ProjectName, 
-			job.Event, 
+		pipelineName := getPipelineNameDisplay(&job)
+		fmt.Printf("%-3d %-10s %-30s %-20s %-15s %-10s\n",
+			i,
+			job.Provider,
+			job.ProjectName,
+			pipelineName,
+			job.Event,
 			job.Workspace)
 	}
 	return nil
@@ -132,4 +144,23 @@ func removePipeline(idStr string) error {
 
 	fmt.Printf("Removed pipeline: %s (%s)\n", removedJob.ProjectName, removedJob.Provider)
 	return nil
+}
+
+func editPipeline(idStr string) error {
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return fmt.Errorf("invalid pipeline ID: %s", idStr)
+	}
+
+	return wizard.RunEditWizard(id)
+}
+
+func getPipelineNameDisplay(job *config.PipelineJob) string {
+	if job.PipelineName != "" {
+		return job.PipelineName
+	}
+	if job.Provider == "gitlab" {
+		return "Build & Deploy (default)"
+	}
+	return "Build (default)"
 }

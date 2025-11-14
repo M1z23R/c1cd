@@ -434,9 +434,15 @@ func updateGitLabCommitStatus(token, serverURL string, job *config.PipelineJob, 
 	baseURL := getGitLabBaseURL(serverURL)
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/statuses/%s", baseURL, job.ProjectID, commitSHA)
 
+	// Use custom pipeline name if set, otherwise default to "Build & Deploy"
+	pipelineName := job.PipelineName
+	if pipelineName == "" {
+		pipelineName = "Build & Deploy"
+	}
+
 	payload := map[string]any{
 		"state": state,
-		"name":  "c1cd Build",
+		"name":  pipelineName,
 		"description": getStatusDescription(state),
 	}
 
@@ -478,9 +484,15 @@ func updateGitHubCommitStatus(token string, job *config.PipelineJob, commitSHA, 
 
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/statuses/%s", owner, repo, commitSHA)
 
+	// Use custom pipeline name if set, otherwise default to "Build"
+	pipelineName := job.PipelineName
+	if pipelineName == "" {
+		pipelineName = "Build"
+	}
+
 	payload := map[string]any{
 		"state":   state,
-		"context": "c1cd Build",
+		"context": pipelineName,
 		"description": getStatusDescription(state),
 	}
 
