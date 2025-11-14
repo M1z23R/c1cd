@@ -276,20 +276,34 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	go func(j *config.PipelineJob, sha string) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
 
+		var checkRunID int64
+		var token, serverURL string
+
 		// Get token for this job
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Printf("Error loading config for status update: %v\n", err)
 		} else {
 			// Find the token for this provider
-			token, serverURL := findTokenForJob(cfg, j)
+			token, serverURL = findTokenForJob(cfg, j)
 
-			// Send "pending" status if we have commit SHA (GitHub uses "pending" instead of "running")
+			// Create a GitHub Check Run for better status reporting
 			if sha != "" && token != "" {
-				if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "pending"); err != nil {
-					fmt.Printf("Warning: failed to update commit status to pending: %v\n", err)
+				checkRunID, err = providers.CreateGitHubCheckRun(token, j, sha)
+				if err != nil {
+					fmt.Printf("Warning: failed to create GitHub check run: %v\n", err)
+					// Fall back to commit status API
+					if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "pending"); err != nil {
+						fmt.Printf("Warning: failed to update commit status to pending: %v\n", err)
+					} else {
+						fmt.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
+					}
 				} else {
-					fmt.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
+					fmt.Printf("GitHub Check Run created (ID: %d) for SHA %s\n", checkRunID, sha)
+					// Update to in_progress
+					if err := providers.UpdateGitHubCheckRun(token, j, checkRunID, "in_progress", "", "Build is running...", ""); err != nil {
+						fmt.Printf("Warning: failed to update check run to in_progress: %v\n", err)
+					}
 				}
 			}
 		}
@@ -304,10 +318,21 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
 					if token != "" {
-						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "failure"); err != nil {
-							fmt.Printf("Warning: failed to update commit status to failure: %v\n", err)
+						if checkRunID != 0 {
+							// Update Check Run to failed
+							summary := fmt.Sprintf("Build failed with error: %v", err)
+							if err := providers.UpdateGitHubCheckRun(token, j, checkRunID, "completed", "failure", summary, ""); err != nil {
+								fmt.Printf("Warning: failed to update check run to failure: %v\n", err)
+							} else {
+								fmt.Printf("GitHub Check Run updated to 'failure' for SHA %s\n", sha)
+							}
 						} else {
-							fmt.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
+							// Fall back to commit status API
+							if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "failure"); err != nil {
+								fmt.Printf("Warning: failed to update commit status to failure: %v\n", err)
+							} else {
+								fmt.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
+							}
 						}
 					}
 				}
@@ -321,10 +346,21 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
 					if token != "" {
-						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "success"); err != nil {
-							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
+						if checkRunID != 0 {
+							// Update Check Run to success
+							summary := "All commands executed successfully"
+							if err := providers.UpdateGitHubCheckRun(token, j, checkRunID, "completed", "success", summary, ""); err != nil {
+								fmt.Printf("Warning: failed to update check run to success: %v\n", err)
+							} else {
+								fmt.Printf("GitHub Check Run updated to 'success' for SHA %s\n", sha)
+							}
 						} else {
-							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+							// Fall back to commit status API
+							if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "success"); err != nil {
+								fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
+							} else {
+								fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+							}
 						}
 					}
 				}
