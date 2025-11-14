@@ -358,24 +358,29 @@ func runCommands(workspace string, commands []string) error {
 		return nil
 	}
 
+	// Join all commands with && to run them sequentially in the same shell
+	// This ensures commands like 'cd' persist across the entire session
+	joinedCommand := strings.Join(commands, " && ")
+
+	fmt.Printf("Executing in %s:\n", workspace)
 	for _, c := range commands {
-		fmt.Printf("Executing in %s: %s\n", workspace, c)
+		fmt.Printf("  %s\n", c)
+	}
 
-		var cmd *exec.Cmd
-		if runtime.GOOS == "windows" {
-			cmd = exec.Command("cmd", "/C", c) // Windows cmd
-		} else {
-			cmd = exec.Command("bash", "-c", c) // Unix shell
-		}
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/C", joinedCommand) // Windows cmd
+	} else {
+		cmd = exec.Command("bash", "-c", joinedCommand) // Unix shell
+	}
 
-		cmd.Dir = workspace
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Env = os.Environ()
+	cmd.Dir = workspace
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
 
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("command failed: %s, error: %w", c, err)
-		}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("commands failed: %w", err)
 	}
 
 	return nil
