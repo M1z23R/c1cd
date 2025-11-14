@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"c1cd/internal/config"
+	"c1cd/internal/logs"
 	"c1cd/internal/providers"
 )
 
@@ -120,6 +121,9 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 	// Extract commit SHA from payload
 	commitSHA := extractCommitSHAFromGitLabPayload(body)
 
+	// Extract ref (branch) from payload
+	ref := extractRefFromGitLabPayload(body)
+
 	// Check branch filtering for GitLab webhooks
 	if len(job.Branches) > 0 {
 		branch := extractBranchFromGitLabPayload(body)
@@ -130,8 +134,21 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	go func(j *config.PipelineJob, sha string) {
+	go func(j *config.PipelineJob, sha, gitRef string) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
+
+		// Create job log
+		logStore := logs.GetStore()
+		jobID, err := logStore.CreateJob(j.ProjectName, sha)
+		if err != nil {
+			fmt.Printf("Warning: failed to create job log: %v\n", err)
+		}
+
+		// Get log writer
+		var logWriter io.Writer
+		if jobID != "" {
+			logWriter, _ = logStore.GetJobWriter(jobID)
+		}
 
 		// Get token for this job
 		cfg, err := config.Load()
@@ -141,27 +158,51 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 			// Find the token and serverURL for this provider
 			token, serverURL := findTokenForJob(cfg, j)
 
+			// Build target URL for logs
+			targetURL := ""
+			if cfg.PublicURL != "" && jobID != "" {
+				targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+			}
+
 			// Send "running" status if we have commit SHA
 			if sha != "" && token != "" {
-				if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "running"); err != nil {
+				if err := providers.UpdateCommitStatusWithURL(token, serverURL, j, sha, "running", targetURL, gitRef); err != nil {
 					fmt.Printf("Warning: failed to update commit status to running: %v\n", err)
 				} else {
 					fmt.Printf("Commit status updated to 'running' for SHA %s\n", sha)
+					if targetURL != "" {
+						fmt.Printf("Logs available at: %s\n", targetURL)
+					}
 				}
 			}
 		}
 
-		// Run the commands
-		if err := runCommands(j.Workspace, j.Commands); err != nil {
-			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, err)
+		// Run the commands with log capture
+		cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter)
+
+		// Complete the job log
+		if jobID != "" {
+			if cmdErr != nil {
+				logStore.CompleteJob(jobID, "failed")
+			} else {
+				logStore.CompleteJob(jobID, "success")
+			}
+		}
+
+		if cmdErr != nil {
+			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, cmdErr)
 
 			// Update status to failed
 			if sha != "" {
 				cfg, err := config.Load()
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
+					targetURL := ""
+					if cfg.PublicURL != "" && jobID != "" {
+						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					}
 					if token != "" {
-						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "failed"); err != nil {
+						if err := providers.UpdateCommitStatusWithURL(token, serverURL, j, sha, "failed", targetURL, gitRef); err != nil {
 							fmt.Printf("Warning: failed to update commit status to failed: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'failed' for SHA %s\n", sha)
@@ -177,8 +218,12 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 				cfg, err := config.Load()
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
+					targetURL := ""
+					if cfg.PublicURL != "" && jobID != "" {
+						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					}
 					if token != "" {
-						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "success"); err != nil {
+						if err := providers.UpdateCommitStatusWithURL(token, serverURL, j, sha, "success", targetURL, gitRef); err != nil {
 							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
@@ -187,7 +232,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-	}(job, commitSHA)
+	}(job, commitSHA, ref)
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "Webhook received, running pipeline.")
@@ -354,6 +399,11 @@ func validateGitHubSignature(payload []byte, signature, secret string) bool {
 }
 
 func runCommands(workspace string, commands []string) error {
+	return runCommandsWithWriter(workspace, commands, nil)
+}
+
+// runCommandsWithWriter runs commands and optionally writes output to a log writer
+func runCommandsWithWriter(workspace string, commands []string, logWriter io.Writer) error {
 	if len(commands) == 0 {
 		return nil
 	}
@@ -375,8 +425,17 @@ func runCommands(workspace string, commands []string) error {
 	}
 
 	cmd.Dir = workspace
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	// If logWriter is provided, write to both stdout and the log file
+	if logWriter != nil {
+		multiWriter := io.MultiWriter(os.Stdout, logWriter)
+		cmd.Stdout = multiWriter
+		cmd.Stderr = multiWriter
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+
 	cmd.Env = os.Environ()
 
 	if err := cmd.Run(); err != nil {
@@ -439,6 +498,18 @@ func extractBranchFromGitLabPayload(payload []byte) string {
 	}
 
 	return ""
+}
+
+func extractRefFromGitLabPayload(payload []byte) string {
+	var gitlabPayload struct {
+		Ref string `json:"ref"`
+	}
+
+	if err := json.Unmarshal(payload, &gitlabPayload); err != nil {
+		return ""
+	}
+
+	return gitlabPayload.Ref
 }
 
 func extractCommitSHAFromGitHubPayload(payload []byte) string {

@@ -418,11 +418,16 @@ func GetAllowedEventKeys(provider string) []string {
 
 // UpdateCommitStatus updates the commit status on GitHub or GitLab
 func UpdateCommitStatus(token, serverURL string, job *config.PipelineJob, commitSHA, state string) error {
+	return UpdateCommitStatusWithURL(token, serverURL, job, commitSHA, state, "", "")
+}
+
+// UpdateCommitStatusWithURL updates commit status with optional target URL and ref
+func UpdateCommitStatusWithURL(token, serverURL string, job *config.PipelineJob, commitSHA, state, targetURL, ref string) error {
 	switch job.Provider {
 	case "gitlab":
-		return updateGitLabCommitStatus(token, serverURL, job, commitSHA, state)
+		return updateGitLabCommitStatusWithURL(token, serverURL, job, commitSHA, state, targetURL, ref)
 	case "github":
-		return updateGitHubCommitStatus(token, job, commitSHA, state)
+		return updateGitHubCommitStatusWithURL(token, job, commitSHA, state, targetURL)
 	default:
 		return fmt.Errorf("unsupported provider: %s", job.Provider)
 	}
@@ -431,6 +436,12 @@ func UpdateCommitStatus(token, serverURL string, job *config.PipelineJob, commit
 // updateGitLabCommitStatus updates commit status via GitLab API
 // States: running, pending, success, failed, canceled
 func updateGitLabCommitStatus(token, serverURL string, job *config.PipelineJob, commitSHA, state string) error {
+	return updateGitLabCommitStatusWithURL(token, serverURL, job, commitSHA, state, "", "")
+}
+
+// updateGitLabCommitStatusWithURL updates commit status via GitLab API with optional target URL and ref
+// States: running, pending, success, failed, canceled
+func updateGitLabCommitStatusWithURL(token, serverURL string, job *config.PipelineJob, commitSHA, state, targetURL, ref string) error {
 	baseURL := getGitLabBaseURL(serverURL)
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/statuses/%s", baseURL, job.ProjectID, commitSHA)
 
@@ -441,9 +452,19 @@ func updateGitLabCommitStatus(token, serverURL string, job *config.PipelineJob, 
 	}
 
 	payload := map[string]any{
-		"state": state,
-		"name":  pipelineName,
+		"state":       state,
+		"name":        pipelineName,
 		"description": getStatusDescription(state),
+	}
+
+	// Add target_url if provided
+	if targetURL != "" {
+		payload["target_url"] = targetURL
+	}
+
+	// Add ref if provided
+	if ref != "" {
+		payload["ref"] = ref
 	}
 
 	jsonBody, err := json.Marshal(payload)
@@ -476,6 +497,12 @@ func updateGitLabCommitStatus(token, serverURL string, job *config.PipelineJob, 
 // updateGitHubCommitStatus updates commit status via GitHub API
 // States: pending, success, error, failure
 func updateGitHubCommitStatus(token string, job *config.PipelineJob, commitSHA, state string) error {
+	return updateGitHubCommitStatusWithURL(token, job, commitSHA, state, "")
+}
+
+// updateGitHubCommitStatusWithURL updates commit status via GitHub API with optional target URL
+// States: pending, success, error, failure
+func updateGitHubCommitStatusWithURL(token string, job *config.PipelineJob, commitSHA, state, targetURL string) error {
 	parts := strings.SplitN(job.ProjectName, "/", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid GitHub repository format: %s, expected owner/repo", job.ProjectName)
@@ -491,9 +518,14 @@ func updateGitHubCommitStatus(token string, job *config.PipelineJob, commitSHA, 
 	}
 
 	payload := map[string]any{
-		"state":   state,
-		"context": pipelineName,
+		"state":       state,
+		"context":     pipelineName,
 		"description": getStatusDescription(state),
+	}
+
+	// Add target_url if provided
+	if targetURL != "" {
+		payload["target_url"] = targetURL
 	}
 
 	jsonBody, err := json.Marshal(payload)
