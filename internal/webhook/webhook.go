@@ -171,14 +171,14 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 				} else {
 					fmt.Printf("Commit status updated to 'running' for SHA %s\n", sha)
 					if targetURL != "" {
-						fmt.Printf("Logs available at: %s\n", targetURL)
+						fmt.Printf("Target URL: %s\n", targetURL)
 					}
 				}
 			}
 		}
 
 		// Run the commands with log capture
-		cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter)
+		lastLog, cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter)
 
 		// Complete the job log
 		if jobID != "" {
@@ -202,10 +202,13 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
 					}
 					if token != "" {
-						if err := providers.UpdateCommitStatusWithURL(token, serverURL, j, sha, "failed", targetURL, gitRef); err != nil {
+						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failed", targetURL, gitRef, lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to failed: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'failed' for SHA %s\n", sha)
+							if targetURL != "" {
+								fmt.Printf("Target URL: %s\n", targetURL)
+							}
 						}
 					}
 				}
@@ -223,10 +226,13 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
 					}
 					if token != "" {
-						if err := providers.UpdateCommitStatusWithURL(token, serverURL, j, sha, "success", targetURL, gitRef); err != nil {
+						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, gitRef, lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+							if targetURL != "" {
+								fmt.Printf("Target URL: %s\n", targetURL)
+							}
 						}
 					}
 				}
@@ -321,6 +327,19 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	go func(j *config.PipelineJob, sha string) {
 		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
 
+		// Create job log
+		logStore := logs.GetStore()
+		jobID, err := logStore.CreateJob(j.ProjectName, sha)
+		if err != nil {
+			fmt.Printf("Warning: failed to create job log: %v\n", err)
+		}
+
+		// Get log writer
+		var logWriter io.Writer
+		if jobID != "" {
+			logWriter, _ = logStore.GetJobWriter(jobID)
+		}
+
 		// Get token for this job
 		cfg, err := config.Load()
 		if err != nil {
@@ -329,30 +348,57 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			// Find the token for this provider
 			token, serverURL := findTokenForJob(cfg, j)
 
+			// Build target URL for logs
+			targetURL := ""
+			if cfg.PublicURL != "" && jobID != "" {
+				targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+			}
+
 			// Send "pending" status if we have commit SHA (GitHub uses "pending" instead of "running")
 			if sha != "" && token != "" {
-				if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "pending"); err != nil {
+				if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "pending", targetURL, "", ""); err != nil {
 					fmt.Printf("Warning: failed to update commit status to pending: %v\n", err)
 				} else {
 					fmt.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
+					if targetURL != "" {
+						fmt.Printf("Target URL: %s\n", targetURL)
+					}
 				}
 			}
 		}
 
-		// Run the commands
-		if err := runCommands(j.Workspace, j.Commands); err != nil {
-			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, err)
+		// Run the commands and capture last 140 chars of output
+		lastLog, cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter)
+
+		// Complete the job log
+		if jobID != "" {
+			if cmdErr != nil {
+				logStore.CompleteJob(jobID, "failed")
+			} else {
+				logStore.CompleteJob(jobID, "success")
+			}
+		}
+
+		if cmdErr != nil {
+			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, cmdErr)
 
 			// Update status to failure
 			if sha != "" {
 				cfg, err := config.Load()
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
+					targetURL := ""
+					if cfg.PublicURL != "" && jobID != "" {
+						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					}
 					if token != "" {
-						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "failure"); err != nil {
+						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failure", targetURL, "", lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to failure: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
+							if targetURL != "" {
+								fmt.Printf("Target URL: %s\n", targetURL)
+							}
 						}
 					}
 				}
@@ -365,11 +411,18 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				cfg, err := config.Load()
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
+					targetURL := ""
+					if cfg.PublicURL != "" && jobID != "" {
+						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					}
 					if token != "" {
-						if err := providers.UpdateCommitStatus(token, serverURL, j, sha, "success"); err != nil {
+						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, "", lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+							if targetURL != "" {
+								fmt.Printf("Target URL: %s\n", targetURL)
+							}
 						}
 					}
 				}
@@ -398,14 +451,47 @@ func validateGitHubSignature(payload []byte, signature, secret string) bool {
 	return false
 }
 
+// lastNCharsWriter captures the last N characters written to it
+type lastNCharsWriter struct {
+	maxSize int
+	buf     []byte
+}
+
+func newLastNCharsWriter(n int) *lastNCharsWriter {
+	return &lastNCharsWriter{
+		maxSize: n,
+		buf:     make([]byte, 0, n),
+	}
+}
+
+func (w *lastNCharsWriter) Write(p []byte) (n int, err error) {
+	n = len(p)
+
+	// Append new data to buffer
+	w.buf = append(w.buf, p...)
+
+	// Keep only the last maxSize characters
+	if len(w.buf) > w.maxSize {
+		w.buf = w.buf[len(w.buf)-w.maxSize:]
+	}
+
+	return n, nil
+}
+
+func (w *lastNCharsWriter) String() string {
+	return string(w.buf)
+}
+
 func runCommands(workspace string, commands []string) error {
-	return runCommandsWithWriter(workspace, commands, nil)
+	_, err := runCommandsWithWriter(workspace, commands, nil)
+	return err
 }
 
 // runCommandsWithWriter runs commands and optionally writes output to a log writer
-func runCommandsWithWriter(workspace string, commands []string, logWriter io.Writer) error {
+// Returns the last 140 characters of output along with any error
+func runCommandsWithWriter(workspace string, commands []string, logWriter io.Writer) (string, error) {
 	if len(commands) == 0 {
-		return nil
+		return "", nil
 	}
 
 	// Join all commands with && to run them sequentially in the same shell
@@ -426,23 +512,27 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 
 	cmd.Dir = workspace
 
-	// If logWriter is provided, write to both stdout and the log file
+	// Create a writer to capture the last 140 chars
+	lastCharsWriter := newLastNCharsWriter(140)
+
+	// If logWriter is provided, write to stdout, log file, and lastCharsWriter
 	if logWriter != nil {
-		multiWriter := io.MultiWriter(os.Stdout, logWriter)
+		multiWriter := io.MultiWriter(os.Stdout, logWriter, lastCharsWriter)
 		cmd.Stdout = multiWriter
 		cmd.Stderr = multiWriter
 	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		multiWriter := io.MultiWriter(os.Stdout, lastCharsWriter)
+		cmd.Stdout = multiWriter
+		cmd.Stderr = multiWriter
 	}
 
 	cmd.Env = os.Environ()
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("commands failed: %w", err)
+		return lastCharsWriter.String(), fmt.Errorf("commands failed: %w", err)
 	}
 
-	return nil
+	return lastCharsWriter.String(), nil
 }
 
 

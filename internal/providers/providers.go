@@ -423,11 +423,16 @@ func UpdateCommitStatus(token, serverURL string, job *config.PipelineJob, commit
 
 // UpdateCommitStatusWithURL updates commit status with optional target URL and ref
 func UpdateCommitStatusWithURL(token, serverURL string, job *config.PipelineJob, commitSHA, state, targetURL, ref string) error {
+	return UpdateCommitStatusWithURLAndDesc(token, serverURL, job, commitSHA, state, targetURL, ref, "")
+}
+
+// UpdateCommitStatusWithURLAndDesc updates commit status with optional target URL, ref, and custom description
+func UpdateCommitStatusWithURLAndDesc(token, serverURL string, job *config.PipelineJob, commitSHA, state, targetURL, ref, customDesc string) error {
 	switch job.Provider {
 	case "gitlab":
-		return updateGitLabCommitStatusWithURL(token, serverURL, job, commitSHA, state, targetURL, ref)
+		return updateGitLabCommitStatusWithURLAndDesc(token, serverURL, job, commitSHA, state, targetURL, ref, customDesc)
 	case "github":
-		return updateGitHubCommitStatusWithURL(token, job, commitSHA, state, targetURL)
+		return updateGitHubCommitStatusWithURLAndDesc(token, job, commitSHA, state, targetURL, customDesc)
 	default:
 		return fmt.Errorf("unsupported provider: %s", job.Provider)
 	}
@@ -442,6 +447,12 @@ func updateGitLabCommitStatus(token, serverURL string, job *config.PipelineJob, 
 // updateGitLabCommitStatusWithURL updates commit status via GitLab API with optional target URL and ref
 // States: running, pending, success, failed, canceled
 func updateGitLabCommitStatusWithURL(token, serverURL string, job *config.PipelineJob, commitSHA, state, targetURL, ref string) error {
+	return updateGitLabCommitStatusWithURLAndDesc(token, serverURL, job, commitSHA, state, targetURL, ref, "")
+}
+
+// updateGitLabCommitStatusWithURLAndDesc updates commit status via GitLab API with optional target URL, ref, and custom description
+// States: running, pending, success, failed, canceled
+func updateGitLabCommitStatusWithURLAndDesc(token, serverURL string, job *config.PipelineJob, commitSHA, state, targetURL, ref, customDesc string) error {
 	baseURL := getGitLabBaseURL(serverURL)
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/statuses/%s", baseURL, job.ProjectID, commitSHA)
 
@@ -451,10 +462,16 @@ func updateGitLabCommitStatusWithURL(token, serverURL string, job *config.Pipeli
 		pipelineName = "Build & Deploy"
 	}
 
+	// Use custom description if provided, otherwise use default
+	description := customDesc
+	if description == "" {
+		description = getStatusDescription(state)
+	}
+
 	payload := map[string]any{
 		"state":       state,
 		"name":        pipelineName,
-		"description": getStatusDescription(state),
+		"description": description,
 	}
 
 	// Add target_url if provided
@@ -503,6 +520,12 @@ func updateGitHubCommitStatus(token string, job *config.PipelineJob, commitSHA, 
 // updateGitHubCommitStatusWithURL updates commit status via GitHub API with optional target URL
 // States: pending, success, error, failure
 func updateGitHubCommitStatusWithURL(token string, job *config.PipelineJob, commitSHA, state, targetURL string) error {
+	return updateGitHubCommitStatusWithURLAndDesc(token, job, commitSHA, state, targetURL, "")
+}
+
+// updateGitHubCommitStatusWithURLAndDesc updates commit status via GitHub API with optional target URL and custom description
+// States: pending, success, error, failure
+func updateGitHubCommitStatusWithURLAndDesc(token string, job *config.PipelineJob, commitSHA, state, targetURL, customDesc string) error {
 	parts := strings.SplitN(job.ProjectName, "/", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid GitHub repository format: %s, expected owner/repo", job.ProjectName)
@@ -517,10 +540,16 @@ func updateGitHubCommitStatusWithURL(token string, job *config.PipelineJob, comm
 		pipelineName = "Build"
 	}
 
+	// Use custom description if provided, otherwise use default
+	description := customDesc
+	if description == "" {
+		description = getStatusDescription(state)
+	}
+
 	payload := map[string]any{
 		"state":       state,
 		"context":     pipelineName,
-		"description": getStatusDescription(state),
+		"description": description,
 	}
 
 	// Add target_url if provided
