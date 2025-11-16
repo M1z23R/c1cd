@@ -159,15 +159,10 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 			// Find the token and serverURL for this provider
 			token, serverURL := findTokenForJob(cfg, j)
 
-			// Build target URL for logs
+			// Build target URL for logs from webhook URL
 			targetURL := ""
 			if jobID != "" {
-				// Use PublicURL if configured, otherwise derive from webhook URL
-				if cfg.PublicURL != "" {
-					targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
-				} else {
-					targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
-				}
+				targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
 			}
 
 			// Send "running" status if we have commit SHA
@@ -203,12 +198,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
 					if jobID != "" {
-						// Use PublicURL if configured, otherwise derive from webhook URL
-						if cfg.PublicURL != "" {
-							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
-						} else {
-							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
-						}
+						targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failed", targetURL, gitRef, lastLog); err != nil {
@@ -230,12 +220,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
 					if jobID != "" {
-						// Use PublicURL if configured, otherwise derive from webhook URL
-						if cfg.PublicURL != "" {
-							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
-						} else {
-							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
-						}
+						targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, gitRef, lastLog); err != nil {
@@ -358,15 +343,10 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			// Find the token for this provider
 			token, serverURL := findTokenForJob(cfg, j)
 
-			// Build target URL for logs
+			// Build target URL for logs from webhook URL
 			targetURL := ""
 			if jobID != "" {
-				// Use PublicURL if configured, otherwise derive from webhook URL
-				if cfg.PublicURL != "" {
-					targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
-				} else {
-					targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
-				}
+				targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
 			}
 
 			// Send "pending" status if we have commit SHA (GitHub uses "pending" instead of "running")
@@ -402,12 +382,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
 					if jobID != "" {
-						// Use PublicURL if configured, otherwise derive from webhook URL
-						if cfg.PublicURL != "" {
-							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
-						} else {
-							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
-						}
+						targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failure", targetURL, "", lastLog); err != nil {
@@ -429,12 +404,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
 					if jobID != "" {
-						// Use PublicURL if configured, otherwise derive from webhook URL
-						if cfg.PublicURL != "" {
-							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
-						} else {
-							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
-						}
+						targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, "", lastLog); err != nil {

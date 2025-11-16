@@ -9,9 +9,8 @@ import (
 const configPath = ".config/c1cd/config.json"
 
 type Config struct {
-	Tokens    map[string][]TokenInfo `json:"tokens"`
-	Jobs      []PipelineJob          `json:"jobs"`
-	PublicURL string                 `json:"public_url,omitempty"` // Public URL for accessing logs (e.g., https://example.com:9091)
+	Tokens map[string][]TokenInfo `json:"tokens"`
+	Jobs   []PipelineJob          `json:"jobs"`
 }
 
 type TokenInfo struct {
