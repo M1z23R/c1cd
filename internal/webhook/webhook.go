@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -160,8 +161,13 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 
 			// Build target URL for logs
 			targetURL := ""
-			if cfg.PublicURL != "" && jobID != "" {
-				targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+			if jobID != "" {
+				// Use PublicURL if configured, otherwise derive from webhook URL
+				if cfg.PublicURL != "" {
+					targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+				} else {
+					targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
+				}
 			}
 
 			// Send "running" status if we have commit SHA
@@ -170,9 +176,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 					fmt.Printf("Warning: failed to update commit status to running: %v\n", err)
 				} else {
 					fmt.Printf("Commit status updated to 'running' for SHA %s\n", sha)
-					if targetURL != "" {
-						fmt.Printf("Target URL: %s\n", targetURL)
-					}
+					fmt.Printf("Target URL: %s\n", targetURL)
 				}
 			}
 		}
@@ -198,17 +202,20 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
-					if cfg.PublicURL != "" && jobID != "" {
-						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					if jobID != "" {
+						// Use PublicURL if configured, otherwise derive from webhook URL
+						if cfg.PublicURL != "" {
+							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+						} else {
+							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
+						}
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failed", targetURL, gitRef, lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to failed: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'failed' for SHA %s\n", sha)
-							if targetURL != "" {
-								fmt.Printf("Target URL: %s\n", targetURL)
-							}
+							fmt.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
@@ -222,17 +229,20 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
-					if cfg.PublicURL != "" && jobID != "" {
-						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					if jobID != "" {
+						// Use PublicURL if configured, otherwise derive from webhook URL
+						if cfg.PublicURL != "" {
+							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+						} else {
+							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
+						}
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, gitRef, lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
-							if targetURL != "" {
-								fmt.Printf("Target URL: %s\n", targetURL)
-							}
+							fmt.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
@@ -350,8 +360,13 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 
 			// Build target URL for logs
 			targetURL := ""
-			if cfg.PublicURL != "" && jobID != "" {
-				targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+			if jobID != "" {
+				// Use PublicURL if configured, otherwise derive from webhook URL
+				if cfg.PublicURL != "" {
+					targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+				} else {
+					targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
+				}
 			}
 
 			// Send "pending" status if we have commit SHA (GitHub uses "pending" instead of "running")
@@ -360,9 +375,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 					fmt.Printf("Warning: failed to update commit status to pending: %v\n", err)
 				} else {
 					fmt.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
-					if targetURL != "" {
-						fmt.Printf("Target URL: %s\n", targetURL)
-					}
+					fmt.Printf("Target URL: %s\n", targetURL)
 				}
 			}
 		}
@@ -388,17 +401,20 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
-					if cfg.PublicURL != "" && jobID != "" {
-						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					if jobID != "" {
+						// Use PublicURL if configured, otherwise derive from webhook URL
+						if cfg.PublicURL != "" {
+							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+						} else {
+							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
+						}
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failure", targetURL, "", lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to failure: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
-							if targetURL != "" {
-								fmt.Printf("Target URL: %s\n", targetURL)
-							}
+							fmt.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
@@ -412,17 +428,20 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					token, serverURL := findTokenForJob(cfg, j)
 					targetURL := ""
-					if cfg.PublicURL != "" && jobID != "" {
-						targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+					if jobID != "" {
+						// Use PublicURL if configured, otherwise derive from webhook URL
+						if cfg.PublicURL != "" {
+							targetURL = fmt.Sprintf("%s/logs/%s", cfg.PublicURL, jobID)
+						} else {
+							targetURL = buildTargetURLFromWebhook(j.WebhookURL, jobID)
+						}
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, "", lastLog); err != nil {
 							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
 							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
-							if targetURL != "" {
-								fmt.Printf("Target URL: %s\n", targetURL)
-							}
+							fmt.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
@@ -673,4 +692,19 @@ func findTokenForJob(cfg *config.Config, job *config.PipelineJob) (token string,
 	// In the future, this could be enhanced to match by project ID or user
 	tokenInfo := tokens[0]
 	return tokenInfo.Token, tokenInfo.ServerURL
+}
+
+// buildTargetURLFromWebhook extracts the base URL from webhook URL and builds the target URL for logs
+// Example: https://example.com:9091/gitlab/webhook -> https://example.com:9091/logs/{jobID}
+func buildTargetURLFromWebhook(webhookURL, jobID string) string {
+	u, err := url.Parse(webhookURL)
+	if err != nil {
+		return ""
+	}
+
+	// Build base URL (scheme + host)
+	baseURL := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+
+	// Append /logs/{jobID}
+	return fmt.Sprintf("%s/logs/%s", baseURL, jobID)
 }
