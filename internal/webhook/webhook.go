@@ -483,9 +483,14 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 		return "", nil
 	}
 
-	// Join all commands with && to run them sequentially in the same shell
+	// Join all commands to run them sequentially in the same shell
 	// This ensures commands like 'cd' persist across the entire session
-	joinedCommand := strings.Join(commands, " && ")
+	// Windows PowerShell uses ';' as separator, Unix shells use '&&'
+	separator := " && "
+	if runtime.GOOS == "windows" {
+		separator = "; "
+	}
+	joinedCommand := strings.Join(commands, separator)
 
 	fmt.Printf("Executing in %s:\n", workspace)
 	for _, c := range commands {
@@ -494,7 +499,7 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/C", joinedCommand) // Windows cmd
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", joinedCommand) // Windows PowerShell
 	} else {
 		cmd = exec.Command("bash", "-c", joinedCommand) // Unix shell
 	}
