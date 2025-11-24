@@ -198,8 +198,12 @@ func (s *LogStore) CompleteJob(jobID, status string) error {
 	job.EndTime = &now
 	job.Status = status
 
-	// Close the writer
+	// Sync and close the writer
 	if job.Writer != nil {
+		// Sync to ensure all data is flushed to disk
+		if f, ok := job.Writer.(*os.File); ok {
+			f.Sync()
+		}
 		job.Writer.Close()
 		job.Writer = nil
 	}

@@ -150,7 +150,11 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		// Get log writer
 		var logWriter io.Writer
 		if jobID != "" {
-			logWriter, _ = logStore.GetJobWriter(jobID)
+			var writerErr error
+			logWriter, writerErr = logStore.GetJobWriter(jobID)
+			if writerErr != nil {
+				logger.Printf("Warning: failed to get job writer: %v\n", writerErr)
+			}
 		}
 
 		// Get token for this job
@@ -334,7 +338,11 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		// Get log writer
 		var logWriter io.Writer
 		if jobID != "" {
-			logWriter, _ = logStore.GetJobWriter(jobID)
+			var writerErr error
+			logWriter, writerErr = logStore.GetJobWriter(jobID)
+			if writerErr != nil {
+				logger.Printf("Warning: failed to get job writer: %v\n", writerErr)
+			}
 		}
 
 		// Get token for this job
@@ -494,9 +502,19 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 	}
 	joinedCommand := strings.Join(commands, separator)
 
+	// Log to app logger
 	logger.Printf("Executing in %s:\n", workspace)
 	for _, c := range commands {
 		logger.Printf("  %s\n", c)
+	}
+
+	// Also write header to job log file
+	if logWriter != nil {
+		fmt.Fprintf(logWriter, "Executing in %s:\n", workspace)
+		for _, c := range commands {
+			fmt.Fprintf(logWriter, "  %s\n", c)
+		}
+		fmt.Fprintln(logWriter, "\n--- Command Output ---")
 	}
 
 	var cmd *exec.Cmd
@@ -525,7 +543,16 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 	cmd.Env = os.Environ()
 
 	if err := cmd.Run(); err != nil {
+		// Write error to job log
+		if logWriter != nil {
+			fmt.Fprintf(logWriter, "\n--- Error ---\n%v\n", err)
+		}
 		return lastCharsWriter.String(), fmt.Errorf("commands failed: %w", err)
+	}
+
+	// Write success footer
+	if logWriter != nil {
+		fmt.Fprintln(logWriter, "\n--- Completed Successfully ---")
 	}
 
 	return lastCharsWriter.String(), nil
