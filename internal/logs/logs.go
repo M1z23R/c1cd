@@ -3,6 +3,7 @@ package logs
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,92 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// Logger provides application-wide logging to both terminal and file
+type Logger struct {
+	logger  *log.Logger
+	file    *os.File
+	mu      sync.Mutex
+}
+
+var (
+	appLogger     *Logger
+	appLoggerOnce sync.Once
+)
+
+// GetLogger returns the global application logger instance
+func GetLogger() *Logger {
+	appLoggerOnce.Do(func() {
+		// Use ~/.cache/c1cd/logs for storing logs
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "/tmp"
+		}
+		logDir := filepath.Join(homeDir, ".cache", "c1cd", "logs")
+
+		// Create logs directory if it doesn't exist
+		os.MkdirAll(logDir, 0755)
+
+		logPath := filepath.Join(logDir, "c1cd.log")
+
+		// Open log file in append mode
+		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			// Fall back to terminal-only logging
+			appLogger = &Logger{
+				logger: log.New(os.Stdout, "", log.LstdFlags),
+			}
+			return
+		}
+
+		// Create MultiWriter to write to both terminal and file
+		multiWriter := io.MultiWriter(os.Stdout, file)
+		appLogger = &Logger{
+			logger: log.New(multiWriter, "", log.LstdFlags),
+			file:   file,
+		}
+	})
+	return appLogger
+}
+
+// Println logs a message (similar to fmt.Println)
+func (l *Logger) Println(v ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logger.Println(v...)
+}
+
+// Printf logs a formatted message (similar to fmt.Printf)
+func (l *Logger) Printf(format string, v ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logger.Printf(format, v...)
+}
+
+// Print logs a message without newline
+func (l *Logger) Print(v ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logger.Print(v...)
+}
+
+// Close closes the log file
+func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file != nil {
+		return l.file.Close()
+	}
+	return nil
+}
+
+// LogPath returns the path to the log file
+func (l *Logger) LogPath() string {
+	if l.file != nil {
+		return l.file.Name()
+	}
+	return ""
+}
 
 // JobLog represents a stored job execution log
 type JobLog struct {

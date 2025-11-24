@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
@@ -11,12 +10,14 @@ import (
 )
 
 var PORT string
+var logger *logs.Logger
 
 func init() {
+	logger = logs.GetLogger()
 	PORT = os.Getenv("C1CD_PORT")
 	if PORT == "" {
 		PORT = "9091"
-		log.Println("⚠️  C1CD_PORT not set, using default 9091")
+		logger.Println("C1CD_PORT not set, using default 9091")
 	}
 }
 
@@ -27,9 +28,12 @@ func Run() {
 	http.HandleFunc("/github/webhook", webhook.HandleGitHubWebhook)
 	http.HandleFunc("/logs/", handleLogs)
 
-	fmt.Println("Starting webhook listener on", addr)
+	logger.Println("Starting webhook listener on", addr)
+	if logPath := logger.LogPath(); logPath != "" {
+		logger.Println("Application logs:", logPath)
+	}
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		fmt.Println("Server error:", err)
+		logger.Println("Server error:", err)
 	}
 }
 

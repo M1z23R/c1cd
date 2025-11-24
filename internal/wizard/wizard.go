@@ -243,7 +243,7 @@ func runWizard(token, provider, serverURL string) (config.PipelineJob, error) {
 		return job, err
 	}
 	branches := []string{}
-	for b := range strings.SplitSeq(branchesRaw, ",") {
+	for _, b := range strings.Split(branchesRaw, ",") {
 		if trimmed := strings.TrimSpace(b); trimmed != "" {
 			branches = append(branches, trimmed)
 		}
@@ -486,7 +486,7 @@ func RunEditWizard(jobIndex int) error {
 		return err
 	}
 	branches := []string{}
-	for b := range strings.SplitSeq(branchesRaw, ",") {
+	for _, b := range strings.Split(branchesRaw, ",") {
 		if trimmed := strings.TrimSpace(b); trimmed != "" {
 			branches = append(branches, trimmed)
 		}

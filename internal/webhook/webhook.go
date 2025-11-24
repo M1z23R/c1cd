@@ -19,6 +19,8 @@ import (
 	"c1cd/internal/providers"
 )
 
+var logger = logs.GetLogger()
+
 var allowedEvents = map[string]string{
 	"on_push":               "push_events",
 	"on_merge_request":      "merge_requests_events",
@@ -66,7 +68,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintln(w, "Failed to load config")
-		fmt.Println("Error loading config:", err)
+		logger.Println("Error loading config:", err)
 		return
 	}
 
@@ -136,13 +138,13 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func(j *config.PipelineJob, sha, gitRef string) {
-		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
+		logger.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
 
 		// Create job log
 		logStore := logs.GetStore()
 		jobID, err := logStore.CreateJob(j.ProjectName, sha)
 		if err != nil {
-			fmt.Printf("Warning: failed to create job log: %v\n", err)
+			logger.Printf("Warning: failed to create job log: %v\n", err)
 		}
 
 		// Get log writer
@@ -154,7 +156,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		// Get token for this job
 		cfg, err := config.Load()
 		if err != nil {
-			fmt.Printf("Error loading config for status update: %v\n", err)
+			logger.Printf("Error loading config for status update: %v\n", err)
 		} else {
 			// Find the token and serverURL for this provider
 			token, serverURL := findTokenForJob(cfg, j)
@@ -168,10 +170,10 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 			// Send "running" status if we have commit SHA
 			if sha != "" && token != "" {
 				if err := providers.UpdateCommitStatusWithURL(token, serverURL, j, sha, "running", targetURL, gitRef); err != nil {
-					fmt.Printf("Warning: failed to update commit status to running: %v\n", err)
+					logger.Printf("Warning: failed to update commit status to running: %v\n", err)
 				} else {
-					fmt.Printf("Commit status updated to 'running' for SHA %s\n", sha)
-					fmt.Printf("Target URL: %s\n", targetURL)
+					logger.Printf("Commit status updated to 'running' for SHA %s\n", sha)
+					logger.Printf("Target URL: %s\n", targetURL)
 				}
 			}
 		}
@@ -189,7 +191,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if cmdErr != nil {
-			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, cmdErr)
+			logger.Printf("Error running commands for %s: %v\n", j.ProjectName, cmdErr)
 
 			// Update status to failed
 			if sha != "" {
@@ -202,16 +204,16 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failed", targetURL, gitRef, lastLog); err != nil {
-							fmt.Printf("Warning: failed to update commit status to failed: %v\n", err)
+							logger.Printf("Warning: failed to update commit status to failed: %v\n", err)
 						} else {
-							fmt.Printf("Commit status updated to 'failed' for SHA %s\n", sha)
-							fmt.Printf("Target URL: %s\n", targetURL)
+							logger.Printf("Commit status updated to 'failed' for SHA %s\n", sha)
+							logger.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
 			}
 		} else {
-			fmt.Printf("Commands finished successfully for %s\n", j.ProjectName)
+			logger.Printf("Commands finished successfully for %s\n", j.ProjectName)
 
 			// Update status to success
 			if sha != "" {
@@ -224,10 +226,10 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, gitRef, lastLog); err != nil {
-							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
+							logger.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
-							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
-							fmt.Printf("Target URL: %s\n", targetURL)
+							logger.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+							logger.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
@@ -250,7 +252,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintln(w, "Failed to load config")
-		fmt.Println("Error loading config:", err)
+		logger.Println("Error loading config:", err)
 		return
 	}
 
@@ -320,13 +322,13 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func(j *config.PipelineJob, sha string) {
-		fmt.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
+		logger.Printf("Running pipeline commands for project %s...\n", j.ProjectName)
 
 		// Create job log
 		logStore := logs.GetStore()
 		jobID, err := logStore.CreateJob(j.ProjectName, sha)
 		if err != nil {
-			fmt.Printf("Warning: failed to create job log: %v\n", err)
+			logger.Printf("Warning: failed to create job log: %v\n", err)
 		}
 
 		// Get log writer
@@ -338,7 +340,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		// Get token for this job
 		cfg, err := config.Load()
 		if err != nil {
-			fmt.Printf("Error loading config for status update: %v\n", err)
+			logger.Printf("Error loading config for status update: %v\n", err)
 		} else {
 			// Find the token for this provider
 			token, serverURL := findTokenForJob(cfg, j)
@@ -352,10 +354,10 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 			// Send "pending" status if we have commit SHA (GitHub uses "pending" instead of "running")
 			if sha != "" && token != "" {
 				if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "pending", targetURL, "", ""); err != nil {
-					fmt.Printf("Warning: failed to update commit status to pending: %v\n", err)
+					logger.Printf("Warning: failed to update commit status to pending: %v\n", err)
 				} else {
-					fmt.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
-					fmt.Printf("Target URL: %s\n", targetURL)
+					logger.Printf("Commit status updated to 'pending' for SHA %s\n", sha)
+					logger.Printf("Target URL: %s\n", targetURL)
 				}
 			}
 		}
@@ -373,7 +375,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if cmdErr != nil {
-			fmt.Printf("Error running commands for %s: %v\n", j.ProjectName, cmdErr)
+			logger.Printf("Error running commands for %s: %v\n", j.ProjectName, cmdErr)
 
 			// Update status to failure
 			if sha != "" {
@@ -386,16 +388,16 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "failure", targetURL, "", lastLog); err != nil {
-							fmt.Printf("Warning: failed to update commit status to failure: %v\n", err)
+							logger.Printf("Warning: failed to update commit status to failure: %v\n", err)
 						} else {
-							fmt.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
-							fmt.Printf("Target URL: %s\n", targetURL)
+							logger.Printf("Commit status updated to 'failure' for SHA %s\n", sha)
+							logger.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
 			}
 		} else {
-			fmt.Printf("Commands finished successfully for %s\n", j.ProjectName)
+			logger.Printf("Commands finished successfully for %s\n", j.ProjectName)
 
 			// Update status to success
 			if sha != "" {
@@ -408,10 +410,10 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 					}
 					if token != "" {
 						if err := providers.UpdateCommitStatusWithURLAndDesc(token, serverURL, j, sha, "success", targetURL, "", lastLog); err != nil {
-							fmt.Printf("Warning: failed to update commit status to success: %v\n", err)
+							logger.Printf("Warning: failed to update commit status to success: %v\n", err)
 						} else {
-							fmt.Printf("Commit status updated to 'success' for SHA %s\n", sha)
-							fmt.Printf("Target URL: %s\n", targetURL)
+							logger.Printf("Commit status updated to 'success' for SHA %s\n", sha)
+							logger.Printf("Target URL: %s\n", targetURL)
 						}
 					}
 				}
@@ -492,9 +494,9 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 	}
 	joinedCommand := strings.Join(commands, separator)
 
-	fmt.Printf("Executing in %s:\n", workspace)
+	logger.Printf("Executing in %s:\n", workspace)
 	for _, c := range commands {
-		fmt.Printf("  %s\n", c)
+		logger.Printf("  %s\n", c)
 	}
 
 	var cmd *exec.Cmd

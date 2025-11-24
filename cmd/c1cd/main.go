@@ -7,12 +7,50 @@ import (
 
 	"c1cd/internal/auth"
 	"c1cd/internal/config"
+	"c1cd/internal/logs"
 	"c1cd/internal/providers"
 	"c1cd/internal/service"
 	"c1cd/internal/wizard"
+
+	"golang.org/x/sys/windows/svc"
 )
 
+var logger = logs.GetLogger()
+
+
+type CiCdService struct{
+	RunFunc func()
+}
+
+func (m *CiCdService) Execute(args []string, r <-chan svc.ChangeRequest, s chan<- svc.Status) (bool, uint32) {
+    s <- svc.Status{State: svc.StartPending}
+    s <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+
+	go m.RunFunc()
+    for c := range r {
+        switch c.Cmd {
+        case svc.Interrogate:
+            s <- c.CurrentStatus
+        case svc.Stop, svc.Shutdown:
+            logger.Println("Service stopping")
+            return false, 0
+        }
+    }
+    return false, 0
+}
+
 func main() {
+	isService, err := svc.IsWindowsService()
+    if err != nil {
+        logger.Println("Fatal:", err)
+        os.Exit(1)
+    }
+	
+    if isService {
+        svc.Run("CiCdService", &CiCdService{RunFunc: service.Run})
+		return
+    }
+
 	args := os.Args[1:]
 
 	if len(args) >= 1 && args[0] == "--service" {
@@ -70,7 +108,7 @@ func main() {
 	}
 
 	// Main wizard - prompt for provider and token selection
-	err := wizard.RunMainWizard()
+	err = wizard.RunMainWizard()
 	if err != nil {
 		fmt.Println("Wizard error:", err)
 		os.Exit(1)
