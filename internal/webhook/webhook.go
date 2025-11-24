@@ -486,29 +486,22 @@ func runCommands(workspace string, commands []string) error {
 	return err
 }
 
-// runCommandsWithWriter runs commands and optionally writes output to a log writer
-// Returns the last 140 characters of output along with any error
 func runCommandsWithWriter(workspace string, commands []string, logWriter io.Writer) (string, error) {
 	if len(commands) == 0 {
 		return "", nil
 	}
 
-	// Join all commands to run them sequentially in the same shell
-	// This ensures commands like 'cd' persist across the entire session
-	// Windows PowerShell uses ';' as separator, Unix shells use '&&'
 	separator := " && "
 	if runtime.GOOS == "windows" {
 		separator = "; "
 	}
 	joinedCommand := strings.Join(commands, separator)
 
-	// Log to app logger
 	logger.Printf("Executing in %s:\n", workspace)
 	for _, c := range commands {
 		logger.Printf("  %s\n", c)
 	}
 
-	// Also write header to job log file
 	if logWriter != nil {
 		fmt.Fprintf(logWriter, "Executing in %s:\n", workspace)
 		for _, c := range commands {
@@ -519,17 +512,23 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", joinedCommand) // Windows PowerShell
+		// Disable progress bars and use non-interactive mode
+		wrappedCommand := "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; " + joinedCommand
+		cmd = exec.Command("powershell.exe",
+			"-NoProfile",
+			"-NonInteractive",
+			"-ExecutionPolicy", "Bypass",
+			"-Command", wrappedCommand)
 	} else {
-		cmd = exec.Command("bash", "-c", joinedCommand) // Unix shell
+		cmd = exec.Command("bash", "-c", joinedCommand)
 	}
 
 	cmd.Dir = workspace
+	cmd.Env = os.Environ()
+	cmd.Stdin = nil // Prevent hanging on interactive prompts
 
-	// Create a writer to capture the last 140 chars
 	lastCharsWriter := newLastNCharsWriter(140)
 
-	// If logWriter is provided, write to stdout, log file, and lastCharsWriter
 	if logWriter != nil {
 		multiWriter := io.MultiWriter(os.Stdout, logWriter, lastCharsWriter)
 		cmd.Stdout = multiWriter
@@ -540,24 +539,27 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 		cmd.Stderr = multiWriter
 	}
 
-	cmd.Env = os.Environ()
-
 	if err := cmd.Run(); err != nil {
-		// Write error to job log
-		if logWriter != nil {
-			fmt.Fprintf(logWriter, "\n--- Error ---\n%v\n", err)
+		errorMsg := fmt.Sprintf("Command failed: %v", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			errorMsg = fmt.Sprintf("Command failed with exit code %d", exitErr.ExitCode())
 		}
-		return lastCharsWriter.String(), fmt.Errorf("commands failed: %w", err)
+
+		if logWriter != nil {
+			fmt.Fprintf(logWriter, "\n--- Error ---\n%s\n", errorMsg)
+			fmt.Fprintf(logWriter, "Last output:\n%s\n", lastCharsWriter.String())
+		}
+
+		logger.Printf("Error: %s", errorMsg)
+		return lastCharsWriter.String(), fmt.Errorf("%s: %w", errorMsg, err)
 	}
 
-	// Write success footer
 	if logWriter != nil {
 		fmt.Fprintln(logWriter, "\n--- Completed Successfully ---")
 	}
 
 	return lastCharsWriter.String(), nil
 }
-
 
 func extractCommitSHAFromGitLabPayload(payload []byte) string {
 	// GitLab webhook payloads have different structures for different events
@@ -628,7 +630,7 @@ func extractRefFromGitLabPayload(payload []byte) string {
 func extractCommitSHAFromGitHubPayload(payload []byte) string {
 	// GitHub webhook payloads have different structures for different events
 	var githubPayload struct {
-		After string `json:"after"` // Push events
+		After      string `json:"after"` // Push events
 		HeadCommit struct {
 			ID string `json:"id"`
 		} `json:"head_commit"` // Push events
