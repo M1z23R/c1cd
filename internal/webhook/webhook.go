@@ -530,13 +530,12 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 	lastCharsWriter := newLastNCharsWriter(140)
 
 	if logWriter != nil {
-		multiWriter := io.MultiWriter(os.Stdout, logWriter, lastCharsWriter)
+		multiWriter := io.MultiWriter(logWriter, lastCharsWriter)
 		cmd.Stdout = multiWriter
 		cmd.Stderr = multiWriter
 	} else {
-		multiWriter := io.MultiWriter(os.Stdout, lastCharsWriter)
-		cmd.Stdout = multiWriter
-		cmd.Stderr = multiWriter
+		cmd.Stdout = lastCharsWriter
+		cmd.Stderr = lastCharsWriter
 	}
 
 	if err := cmd.Run(); err != nil {
