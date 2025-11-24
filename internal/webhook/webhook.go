@@ -512,13 +512,8 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// Disable progress bars and use non-interactive mode
-		wrappedCommand := "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; " + joinedCommand
-		cmd = exec.Command("powershell.exe",
-			"-NoProfile",
-			"-NonInteractive",
-			"-ExecutionPolicy", "Bypass",
-			"-Command", wrappedCommand)
+		// Use cmd.exe for more predictable behavior
+		cmd = exec.Command("cmd.exe", "/C", joinedCommand)
 	} else {
 		cmd = exec.Command("bash", "-c", joinedCommand)
 	}
