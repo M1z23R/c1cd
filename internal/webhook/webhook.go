@@ -121,6 +121,20 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// For "on_tag" events, filter out tag deletions (after field will be null SHA)
+	if job.Event == "on_tag" {
+		var tagPayload struct {
+			After string `json:"after"`
+		}
+		if err := json.Unmarshal(body, &tagPayload); err == nil {
+			if tagPayload.After == "" || tagPayload.After == "0000000000000000000000000000000000000000" {
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintln(w, "Tag deletion event detected. Skipping pipeline")
+				return
+			}
+		}
+	}
+
 	// Extract commit SHA from payload
 	commitSHA := extractCommitSHAFromGitLabPayload(body)
 
@@ -312,6 +326,20 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// For "on_tag" events (create), filter to only process tag creations, not branch creations
+	if job.Event == "on_tag" && eventType == "create" {
+		var createPayload struct {
+			RefType string `json:"ref_type"`
+		}
+		if err := json.Unmarshal(payload, &createPayload); err == nil {
+			if createPayload.RefType != "tag" {
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintf(w, "Create event is for '%s', not a tag. Skipping pipeline", createPayload.RefType)
+				return
+			}
+		}
+	}
+
 	// Extract commit SHA from payload
 	commitSHA := extractCommitSHAFromGitHubPayload(payload)
 
@@ -491,11 +519,9 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 		return "", nil
 	}
 
-	separator := " && "
-	if runtime.GOOS == "windows" {
-		separator = "; "
-	}
-	joinedCommand := strings.Join(commands, separator)
+	// Use && on both platforms - it works in both bash and cmd.exe
+	// Commands will stop executing if any command fails
+	joinedCommand := strings.Join(commands, " && ")
 
 	logger.Printf("Executing in %s:\n", workspace)
 	for _, c := range commands {
@@ -512,8 +538,25 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// Use cmd.exe for more predictable behavior
-		cmd = exec.Command("cmd.exe", "/C", joinedCommand)
+		// Detect if any command contains .ps1 files
+		usePowerShell := false
+		for _, command := range commands {
+			if strings.Contains(strings.ToLower(command), ".ps1") {
+				usePowerShell = true
+				break
+			}
+		}
+
+		if usePowerShell {
+			// Use PowerShell for .ps1 scripts
+			// -NoProfile: Don't load user profile (faster startup)
+			// -NonInteractive: Don't prompt for user input
+			// -Command: Execute the command
+			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", joinedCommand)
+		} else {
+			// Use cmd.exe for regular commands
+			cmd = exec.Command("cmd.exe", "/C", joinedCommand)
+		}
 	} else {
 		cmd = exec.Command("bash", "-c", joinedCommand)
 	}
