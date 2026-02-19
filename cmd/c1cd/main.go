@@ -16,10 +16,6 @@ import (
 var logger = logs.GetLogger()
 
 func main() {
-	if handleServiceMode() {
-		return
-	}
-
 	args := os.Args[1:]
 
 	if len(args) >= 1 && args[0] == "--service" {
