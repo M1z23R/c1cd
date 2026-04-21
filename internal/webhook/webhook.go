@@ -172,12 +172,14 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Get token for this job
+		var jobToken string
 		cfg, err := config.Load()
 		if err != nil {
 			logger.Printf("Error loading config for status update: %v\n", err)
 		} else {
 			// Find the token and serverURL for this provider
 			token, serverURL := findTokenForJob(cfg, j)
+			jobToken = token
 
 			// Build target URL for logs from webhook URL
 			targetURL := ""
@@ -197,7 +199,7 @@ func HandleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Run the commands with log capture
-		lastLog, cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter)
+		lastLog, cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter, buildJobEnv(j.Provider, jobToken))
 
 		// Complete the job log
 		if jobID != "" {
@@ -374,12 +376,14 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Get token for this job
+		var jobToken string
 		cfg, err := config.Load()
 		if err != nil {
 			logger.Printf("Error loading config for status update: %v\n", err)
 		} else {
 			// Find the token for this provider
 			token, serverURL := findTokenForJob(cfg, j)
+			jobToken = token
 
 			// Build target URL for logs from webhook URL
 			targetURL := ""
@@ -399,7 +403,7 @@ func HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Run the commands and capture last 140 chars of output
-		lastLog, cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter)
+		lastLog, cmdErr := runCommandsWithWriter(j.Workspace, j.Commands, logWriter, buildJobEnv(j.Provider, jobToken))
 
 		// Complete the job log
 		if jobID != "" {
@@ -509,12 +513,20 @@ func (w *lastNCharsWriter) String() string {
 	return string(w.buf)
 }
 
-func runCommands(workspace string, commands []string) error {
-	_, err := runCommandsWithWriter(workspace, commands, nil)
-	return err
+func buildJobEnv(provider, token string) []string {
+	if token == "" {
+		return nil
+	}
+	switch provider {
+	case "gitlab":
+		return []string{"GITLAB_TOKEN=" + token, "CI_JOB_TOKEN=" + token}
+	case "github":
+		return []string{"GITHUB_TOKEN=" + token}
+	}
+	return nil
 }
 
-func runCommandsWithWriter(workspace string, commands []string, logWriter io.Writer) (string, error) {
+func runCommandsWithWriter(workspace string, commands []string, logWriter io.Writer, extraEnv []string) (string, error) {
 	if len(commands) == 0 {
 		return "", nil
 	}
@@ -562,7 +574,7 @@ func runCommandsWithWriter(workspace string, commands []string, logWriter io.Wri
 	}
 
 	cmd.Dir = workspace
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdin = nil // Prevent hanging on interactive prompts
 
 	lastCharsWriter := newLastNCharsWriter(140)
